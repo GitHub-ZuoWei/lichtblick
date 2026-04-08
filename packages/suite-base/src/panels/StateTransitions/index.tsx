@@ -14,9 +14,9 @@
 //   found at http://www.apache.org/licenses/LICENSE-2.0
 //   You may not use this file except in compliance with the License.
 
-import * as _ from "lodash-es";
 import { useCallback, useMemo, useState } from "react";
 
+import { parseMessagePath } from "@lichtblick/message-path";
 import { add as addTimes, fromSec } from "@lichtblick/rostime";
 import useMessagesByPath from "@lichtblick/suite-base/components/MessagePathSyntax/useMessagesByPath";
 import { useMessagePipelineGetter } from "@lichtblick/suite-base/components/MessagePipeline";
@@ -31,7 +31,7 @@ import {
   STATE_TRANSITION_PLUGINS,
 } from "@lichtblick/suite-base/panels/StateTransitions/constants";
 import useChartScalesAndBounds from "@lichtblick/suite-base/panels/StateTransitions/hooks/useChartScalesAndBounds";
-import { useDecodedBlocks } from "@lichtblick/suite-base/panels/StateTransitions/hooks/useDecodedBlocks";
+import { useDecodedMessageRange } from "@lichtblick/suite-base/panels/StateTransitions/hooks/useDecodedMessageRange";
 import useMessagePathDropConfig from "@lichtblick/suite-base/panels/StateTransitions/hooks/useMessagePathDropConfig";
 import { usePanelSettings } from "@lichtblick/suite-base/panels/StateTransitions/hooks/usePanelSettings";
 import useStateTransitionsData from "@lichtblick/suite-base/panels/StateTransitions/hooks/useStateTransitionsData";
@@ -45,17 +45,42 @@ function StateTransitions(props: StateTransitionPanelProps) {
   const { paths } = config;
   const { classes } = useStateTransitionsStyles();
 
-  const pathStrings = useMemo(() => paths.map(({ value }) => value), [paths]);
-
   const [focusedPath, setFocusedPath] = useState<undefined | string[]>(undefined);
 
   useMessagePathDropConfig(saveConfig);
 
   const { startTime, currentTimeSinceStart, endTimeSinceStart } = useStateTransitionsTime();
 
-  const itemsByPath = useMessagesByPath(pathStrings);
+  const { topics, pathStrings } = useMemo(() => {
+    const newPathStrings = paths.map(({ value }) => value);
+    const uniqueTopics = new Set<string>();
 
-  const decodedBlocks = useDecodedBlocks(paths);
+    for (const pathString of newPathStrings) {
+      const parsed = parseMessagePath(pathString);
+      if (parsed) {
+        uniqueTopics.add(parsed.topicName);
+      }
+    }
+
+    return {
+      topics: [...uniqueTopics],
+      pathStrings: newPathStrings,
+    };
+  }, [paths]);
+
+  const decodedMessages = useDecodedMessageRange(topics, pathStrings);
+
+  // When range data is active, skip useMessagesByPath subscriptions entirely
+  // to avoid wasteful current-frame processing and decoding.
+  const hasRangeData = useMemo(
+    () =>
+      decodedMessages.some((block) =>
+        pathStrings.some((pathStr) => (block[pathStr]?.length ?? 0) > 0),
+      ),
+    [decodedMessages, pathStrings],
+  );
+
+  const itemsByPath = useMessagesByPath(hasRangeData ? [] : pathStrings);
 
   const { height, heightPerTopic } = useMemo(() => {
     const onlyTopicsHeight = paths.length * 64;
@@ -66,16 +91,7 @@ function StateTransitions(props: StateTransitionPanelProps) {
     };
   }, [paths.length]);
 
-  // If our blocks data covers all paths in the chart then ignore the data in itemsByPath
-  // since it's not needed to render the chart and would just cause unnecessary re-renders
-  // if included in the dataset.
-  const newItemsByPath = useMemo(() => {
-    const newItemsNotInBlocks = _.pickBy(
-      itemsByPath,
-      (_items, path) => !decodedBlocks.some((block) => block[path]),
-    );
-    return _.isEmpty(newItemsNotInBlocks) ? EMPTY_ITEMS_BY_PATH : newItemsNotInBlocks;
-  }, [decodedBlocks, itemsByPath]);
+  const newItemsByPath = hasRangeData ? EMPTY_ITEMS_BY_PATH : itemsByPath;
 
   const showPoints = config.showPoints === true;
 
@@ -83,7 +99,7 @@ function StateTransitions(props: StateTransitionPanelProps) {
     paths,
     startTime,
     newItemsByPath,
-    decodedBlocks,
+    decodedMessages,
     showPoints,
   );
 
