@@ -393,6 +393,22 @@ yarn test:e2e:desktop:debug     # Desktop E2E with debug mode
 yarn test:e2e:web:debug         # Web E2E with debug mode
 ```
 
+### AI-Assisted E2E Test Development
+
+This repository includes a [Playwright MCP](https://github.com/microsoft/playwright-mcp) server
+(configured in `.vscode/mcp.json`) that enables GitHub Copilot in Agent mode to control a real
+browser and interact with the running web app while you write tests.
+
+Use the **`@lb-e2e-test`** agent in Copilot Chat to create new E2E tests. It will:
+
+1. Use the Playwright MCP browser to explore the live app and verify selectors
+2. Write tests following the GWT pattern used across the project
+3. Instrument source components with `data-testid` attributes when needed
+4. Run the generated tests to confirm they pass
+
+> **Requirements:** VS Code 1.99+, GitHub Copilot extension with Agent mode, Google Chrome.
+> See [e2e/README.md](e2e/README.md) for full setup and usage instructions.
+
 ### CI Pipeline
 
 The following checks run automatically on every PR:

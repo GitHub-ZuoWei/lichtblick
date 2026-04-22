@@ -160,6 +160,21 @@ This project includes a [Playwright MCP](https://github.com/microsoft/playwright
 - Desktop (Electron) tests are **not** covered by Playwright MCP — the `electronApp` custom fixture handles those.
 - Generated code snippets appear inline in Copilot chat. Copy them directly into your spec files.
 
+### Using the `@lb-e2e-test` agent
+
+For end-to-end test creation, use the **`@lb-e2e-test`** agent directly in GitHub Copilot Chat
+(Agent mode). It automatically:
+
+- Loads the [test-conventions](../.github/skills/test-conventions/SKILL.md) and
+  [e2e-playwright-mcp](../.github/skills/e2e-playwright-mcp/SKILL.md) skills before generating any test
+- Uses the Playwright MCP browser to explore the app and verify selectors
+- Follows the GWT pattern and MPL-2.0 header conventions
+- Adds `data-testid` / `aria-pressed` attributes to source components when no stable selector exists
+
+```
+@lb-e2e-test Create a test for the "add panel" flow in the desktop app
+```
+
 ---
 
-> For questions or improvements, contact the QA team or refer to the [Playwright docs](https://playwright.dev/docs/intro).
+> For questions or improvements, open a GitHub Discussion or refer to the [Playwright docs](https://playwright.dev/docs/intro).
