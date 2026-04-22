@@ -143,6 +143,12 @@ sudo apt-get update && sudo apt-get install libgtk-3-0 libatk1.0-0 libatk-bridge
 
 👉 **Recommendation**: if using the `.tar.gz`, always check the error messages in the terminal. They will indicate which library is missing so you can install it manually.
 
+## :robot: AI-Assisted Development
+
+This repository is configured with a [Playwright MCP](https://github.com/microsoft/playwright-mcp) server (`.vscode/mcp.json`) that integrates browser automation directly into GitHub Copilot Agent mode. This allows AI agents to navigate the running app, inspect its accessibility tree, take screenshots, and generate Playwright TypeScript code — all from within the VS Code chat panel.
+
+For full usage instructions, see the [e2e README](e2e/README.md#-ai-assisted-test-development-with-playwright-mcp).
+
 ## :pencil: License (Open Source)
 
 Lichtblick follows an open core licensing model. Most functionality is available in this repository, and can be reproduced or modified per the terms of the [Mozilla Public License v2.0](/LICENSE).

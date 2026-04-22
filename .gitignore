@@ -12,6 +12,9 @@ storybook-static/
 coverage/
 .env
 
+# Playwright MCP server output (snapshots, screenshots, console logs)
+.playwright-mcp/
+
 # E2E tests
 e2e/reports
 e2e/tests/reports/desktop/*

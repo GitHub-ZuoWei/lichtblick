@@ -4587,6 +4587,18 @@ __metadata:
   languageName: node
   linkType: hard
 
+"@playwright/mcp@npm:0.0.70":
+  version: 0.0.70
+  resolution: "@playwright/mcp@npm:0.0.70"
+  dependencies:
+    playwright: 1.60.0-alpha-1774999321000
+    playwright-core: 1.60.0-alpha-1774999321000
+  bin:
+    playwright-mcp: cli.js
+  checksum: 032d03897af225b03ce910d6374a74208055fc05663edaf33cd8373cbe100de06816de7fed6b8d2bffdd478e1b89a86fdc775dc65cda7f2d93237fd97440e5d2
+  languageName: node
+  linkType: hard
+
 "@playwright/test@npm:1.55.1":
   version: 1.55.1
   resolution: "@playwright/test@npm:1.55.1"
@@ -15006,6 +15018,7 @@ __metadata:
     "@lichtblick/tsconfig": 1.0.2
     "@mui/material": 7.2.0
     "@octokit/rest": 22.0.1
+    "@playwright/mcp": 0.0.70
     "@playwright/test": 1.55.1
     "@storybook/react": 9.1.9
     "@storybook/react-webpack5": 9.1.9
@@ -17320,6 +17333,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"playwright-core@npm:1.60.0-alpha-1774999321000":
+  version: 1.60.0-alpha-1774999321000
+  resolution: "playwright-core@npm:1.60.0-alpha-1774999321000"
+  bin:
+    playwright-core: cli.js
+  checksum: 7302f472d029deddc1ceb64258fd6eaa3b018c78a433728eb0aaadb4d4c1785d7e1dde1dd195fc0b36346234c13ed7a3c5eabe2c5782d13b4f3e72b3201fd30f
+  languageName: node
+  linkType: hard
+
 "playwright@npm:1.55.1":
   version: 1.55.1
   resolution: "playwright@npm:1.55.1"
@@ -17332,6 +17354,21 @@ __metadata:
   bin:
     playwright: cli.js
   checksum: 4935122ed687cd14861d64e6fdc79613d36d45f1363e911213a338da9993525d3872d7379300471f70209e1ad68ec91c0d65f0136e6c09c0775477943aaf7fb3
+  languageName: node
+  linkType: hard
+
+"playwright@npm:1.60.0-alpha-1774999321000":
+  version: 1.60.0-alpha-1774999321000
+  resolution: "playwright@npm:1.60.0-alpha-1774999321000"
+  dependencies:
+    fsevents: 2.3.2
+    playwright-core: 1.60.0-alpha-1774999321000
+  dependenciesMeta:
+    fsevents:
+      optional: true
+  bin:
+    playwright: cli.js
+  checksum: 8630dd7535fd8144c9840350ff23ccb27b64bbd4de527040fb97ba5a8e5912f6df01977a6d81334fd62ca5de5552cfa8cd3a10d6ca551df2fc2c5285c312db55
   languageName: node
   linkType: hard
 
