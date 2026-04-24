@@ -22,7 +22,12 @@ const SyncInstanceToggle = (): React.JSX.Element => {
   };
 
   return (
-    <Button className={classes.button} onClick={handleToogle}>
+    <Button
+      className={classes.button}
+      onClick={handleToogle}
+      data-testid="sync-toggle-button"
+      aria-pressed={syncInstances}
+    >
       <Stack className={classes.textWrapper}>
         <Typography className={classes.syncText}>Sync</Typography>
         <Typography className={classes.onOffText}>{syncInstances ? "on" : "off"}</Typography>

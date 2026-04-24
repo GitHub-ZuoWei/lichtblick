@@ -229,6 +229,8 @@ export default function PlaybackControls({
             <HoverableIconButton
               size="small"
               title="Loop playback"
+              data-testid="loop-playback-button"
+              aria-pressed={repeat}
               color={repeat ? "primary" : "inherit"}
               onClick={toggleRepeat}
               icon={repeat ? <ArrowRepeatAll20Regular /> : <ArrowRepeatAllOff20Regular />}
