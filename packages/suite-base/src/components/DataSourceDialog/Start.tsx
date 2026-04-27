@@ -27,6 +27,10 @@ export default function Start(): React.JSX.Element {
   const { t } = useTranslation("openDialog");
   const { dialogActions } = useWorkspaceActions();
 
+  function selectView(view: string): void {
+    void analytics.logEvent(AppEvent.DIALOG_SELECT_VIEW, { type: view });
+  }
+
   const startItems = useMemo(() => {
     return [
       {
@@ -40,7 +44,7 @@ export default function Start(): React.JSX.Element {
         ),
         onClick: () => {
           dialogActions.dataSource.open("file");
-          void analytics.logEvent(AppEvent.DIALOG_SELECT_VIEW, { type: "local" });
+          selectView("local");
         },
       },
       {
@@ -54,11 +58,11 @@ export default function Start(): React.JSX.Element {
         ),
         onClick: () => {
           dialogActions.dataSource.open("connection");
-          void analytics.logEvent(AppEvent.DIALOG_SELECT_VIEW, { type: "live" });
+          selectView("live");
         },
       },
     ];
-  }, [analytics, dialogActions.dataSource, t]);
+  }, [dialogActions.dataSource, t]);
 
   return (
     <Stack className={classes.grid}>

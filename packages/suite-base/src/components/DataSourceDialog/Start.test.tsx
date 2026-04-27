@@ -10,6 +10,7 @@ import { useTranslation } from "react-i18next";
 import { useAnalytics } from "@lichtblick/suite-base/context/AnalyticsContext";
 import { usePlayerSelection } from "@lichtblick/suite-base/context/PlayerSelectionContext";
 import { useWorkspaceActions } from "@lichtblick/suite-base/context/Workspace/useWorkspaceActions";
+import { AppEvent } from "@lichtblick/suite-base/services/IAnalytics";
 import { BasicBuilder } from "@lichtblick/test-builders";
 
 import Start from "./Start";
@@ -110,6 +111,7 @@ describe("Start Component", () => {
 
     // THEN
     expect(mockOpenDialog).toHaveBeenCalledWith("file");
+    expect(mockLogEvent).toHaveBeenCalledWith(AppEvent.DIALOG_SELECT_VIEW, { type: "local" });
   });
 
   it("handles 'open-connection' button click", () => {
@@ -122,6 +124,7 @@ describe("Start Component", () => {
 
     // THEN
     expect(mockOpenDialog).toHaveBeenCalledWith("connection");
+    expect(mockLogEvent).toHaveBeenCalledWith(AppEvent.DIALOG_SELECT_VIEW, { type: "live" });
   });
 
   it("handles recent source selection", () => {
