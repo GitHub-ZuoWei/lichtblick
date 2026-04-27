@@ -36,14 +36,16 @@ import {
   DraggedMessagePath,
   MessagePathDropStatus,
 } from "@lichtblick/suite-base/components/PanelExtensionAdapter";
-import { HUDItemManager } from "@lichtblick/suite-base/panels/ThreeDeeRender/HUDItemManager";
+import {
+  HUDItemManager,
+  HUDItem,
+} from "@lichtblick/suite-base/panels/ThreeDeeRender/HUDItemManager";
 import { LayerErrors } from "@lichtblick/suite-base/panels/ThreeDeeRender/LayerErrors";
 import { ICameraHandler } from "@lichtblick/suite-base/panels/ThreeDeeRender/renderables/ICameraHandler";
 import IAnalytics from "@lichtblick/suite-base/services/IAnalytics";
 import { palette, fontMonospace } from "@lichtblick/theme";
 import { LabelMaterial, LabelPool } from "@lichtblick/three-text";
 
-import { HUDItem } from "./HUDItemManager";
 import {
   IRenderer,
   InstancedLineMaterial,
@@ -64,6 +66,7 @@ import { SettingsManager, SettingsTreeEntry } from "./SettingsManager";
 import { SharedGeometry } from "./SharedGeometry";
 import { CameraState } from "./camera";
 import { DARK_OUTLINE, LIGHT_OUTLINE, stringToRgb } from "./color";
+import { HOVER_PICK_THROTTLE_MS } from "./constants";
 import { FRAME_TRANSFORMS_DATATYPES, FRAME_TRANSFORM_DATATYPES } from "./foxglove";
 import { DetailLevel, msaaSamples } from "./lod";
 import {
@@ -340,6 +343,30 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
     });
     this.input.on("click", (cursorCoords) => {
       this.#clickHandler(cursorCoords);
+    });
+
+    // Throttled hover picking: perform GPU pick on mousemove at 10 Hz
+    // Mouse position is emitted on every move for smooth tooltip following.
+    let hoverThrottleTimer: ReturnType<typeof setTimeout> | undefined;
+    let isMouseDown = false;
+    this.input.on("mousedown", () => {
+      isMouseDown = true;
+    });
+    this.input.on("mouseup", () => {
+      isMouseDown = false;
+    });
+    this.input.on("mousemove", (cursorCoords) => {
+      if (isMouseDown || !this.#pickingEnabled) {
+        return;
+      }
+      this.emit("hoverMoved", cursorCoords, this);
+      if (hoverThrottleTimer != undefined) {
+        return;
+      }
+      hoverThrottleTimer = setTimeout(() => {
+        hoverThrottleTimer = undefined;
+      }, HOVER_PICK_THROTTLE_MS);
+      this.#hoverHandler(cursorCoords);
     });
 
     this.#picker = new Picker(this.gl, this.#scene);
@@ -1423,6 +1450,31 @@ export class Renderer extends EventEmitter<RendererEvents> implements IRenderer 
 
     log.debug(`Clicked ${selections.length} renderable(s)`);
     this.emit("renderablesClicked", selections, cursorCoords, this);
+  };
+
+  readonly #hoverHandler = (cursorCoords: THREE.Vector2): void => {
+    if (!this.#pickingEnabled) {
+      return;
+    }
+    // Disable hover picking while a tool is active
+    if (this.measurementTool.state !== "idle" || this.publishClickTool.state !== "idle") {
+      return;
+    }
+
+    const camera = this.cameraHandler.getActiveCamera();
+    const selections: PickedRenderable[] = [];
+    let curSelection: PickedRenderable | undefined = this.#pickSingleObject(cursorCoords);
+    while (curSelection && selections.length < MAX_SELECTIONS) {
+      selections.push(curSelection);
+      curSelection.renderable.visible = false;
+      this.gl.render(this.#scene, camera);
+      curSelection = this.#pickSingleObject(cursorCoords);
+    }
+    for (const selection of selections) {
+      selection.renderable.visible = true;
+    }
+    this.animationFrame();
+    this.emit("renderableHovered", selections, cursorCoords, this);
   };
 
   #handleFrameTransform = ({ message }: MessageEvent<DeepPartial<FrameTransform>>): void => {

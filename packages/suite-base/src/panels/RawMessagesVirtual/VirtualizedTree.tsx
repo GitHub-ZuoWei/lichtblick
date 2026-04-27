@@ -29,7 +29,6 @@ export const VirtualizedTree = memo(function VirtualizedTree({
 }: PropsVirtualizedTree) {
   const { classes } = useStyles();
 
-  // eslint-disable-next-line no-restricted-syntax
   const parentRef = useRef<HTMLDivElement>(null);
 
   const flatData = useMemo(() => {

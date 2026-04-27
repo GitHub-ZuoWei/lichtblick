@@ -79,7 +79,6 @@ export function main(): void {
       }
     }, [state.error]);
 
-    // eslint-disable-next-line no-restricted-syntax
     const progressRef = useRef<HTMLProgressElement>(null);
 
     const loadMoreInfo = state.value?.fileInfo?.loadMoreInfo;
