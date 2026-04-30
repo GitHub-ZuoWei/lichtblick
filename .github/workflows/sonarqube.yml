@@ -3,8 +3,10 @@ name: SonarCloud
 on:
   push:
     branches: ["develop"]
+  pull_request:
+    types: [opened, synchronize, reopened, labeled]
   workflow_run:
-    workflows: ["Sonar Prep"]
+    workflows: ["Sonar Fork Reports"]
     types: [completed]
   workflow_dispatch:
 
@@ -12,10 +14,10 @@ env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
-  push-and-manual-scan:
-    name: SonarCloud (push/manual)
+  internal-scan:
+    name: Internal scan
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository) }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -57,12 +59,13 @@ jobs:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
 
-  pr-scan:
-    name: SonarCloud (workflow_run PR)
+  external-fork-scan:
+    name: External fork scan
     runs-on: ubuntu-latest
-    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' }}
+    if: ${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'pull_request' && github.event.pull_request.labels.name == 'quality-check' }}
     permissions:
       actions: read
+      checks: write
       contents: read
       pull-requests: read
     steps:
@@ -79,7 +82,19 @@ jobs:
         run: |
           echo "number=$(jq -r '.number' ./.sonar-pr/pr-metadata.json)" >> "$GITHUB_OUTPUT"
           echo "head_ref=$(jq -r '.head_ref' ./.sonar-pr/pr-metadata.json)" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$(jq -r '.head_sha' ./.sonar-pr/pr-metadata.json)" >> "$GITHUB_OUTPUT"
           echo "base_ref=$(jq -r '.base_ref' ./.sonar-pr/pr-metadata.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Create in-progress PR check run
+        id: check
+        uses: actions/github-script@v7
+        env:
+          HEAD_SHA: ${{ steps.metadata.outputs.head_sha }}
+        with:
+          result-encoding: string
+          script: |
+            const script = require('./.github/workflows/scripts/create-check-run.ts');
+            return await script({ github, context });
 
       - uses: actions/checkout@v6
         with:
@@ -115,3 +130,25 @@ jobs:
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
           SONAR_HOST_URL: ${{ vars.SONAR_HOST_URL }}
+
+      - name: Complete PR check run
+        if: always()
+        uses: actions/github-script@v7
+        env:
+          JOB_STATUS: ${{ job.status }}
+          CHECK_RUN_ID: ${{ steps.check.outputs.result }}
+        with:
+          script: |
+            const script = require('./.github/workflows/scripts/update-check-run-status.js');
+            await script({ github, context });
+
+  sonar-result-check:
+    name: Analysis result check
+    runs-on: ubuntu-latest
+    if: always()
+    needs: [internal-scan, external-fork-scan]
+    steps:
+      - run: |
+          if [[ "${{ needs.internal-scan.result }}" == "failure" || "${{ needs.external-fork-scan.result }}" == "failure" ]]; then
+            exit 1
+          fi
