@@ -21,6 +21,15 @@ jest.mock("@lichtblick/suite-base/util/isDesktopApp", () => ({
 
 const mockIsDesktop = isDesktopApp as jest.MockedFunction<typeof isDesktopApp>;
 
+/** Helper to set hash params on a URL (simulating anchor parameters). */
+function setHashParams(url: URL, params: [string, string][]): void {
+  const hashParams = new URLSearchParams(url.hash.startsWith("#") ? url.hash.slice(1) : url.hash);
+  for (const [k, v] of params) {
+    hashParams.append(k, v);
+  }
+  url.hash = `#${hashParams.toString()}`;
+}
+
 describe("app state url parser", () => {
   // Note that the foxglove URL here is different from actual foxglove URLs because Node's URL parser
   // interprets lichtblick:// URLs differently than the browser does.
@@ -35,8 +44,10 @@ describe("app state url parser", () => {
 
     it("parses rosbag data state urls", () => {
       const url = urlBuilder();
-      url.searchParams.append("ds", "ros1-remote-bagfile");
-      url.searchParams.append("ds.url", "http://example.com");
+      setHashParams(url, [
+        ["ds", "ros1-remote-bagfile"],
+        ["ds.url", "http://example.com"],
+      ]);
 
       expect(parseAppURLState(url)).toMatchObject({
         ds: "ros1-remote-bagfile",
@@ -48,9 +59,11 @@ describe("app state url parser", () => {
 
     it("parses multiple remote data state urls to a single string", () => {
       const url = urlBuilder();
-      url.searchParams.append("ds", "remote-file");
-      url.searchParams.append("ds.url", "http://example1.com");
-      url.searchParams.append("ds.url", "http://example2.com");
+      setHashParams(url, [
+        ["ds", "remote-file"],
+        ["ds.url", "http://example1.com"],
+        ["ds.url", "http://example2.com"],
+      ]);
 
       expect(parseAppURLState(url)).toMatchObject({
         ds: "remote-file",
@@ -62,10 +75,12 @@ describe("app state url parser", () => {
 
     it("parses handles duplicate dsParams correctly", () => {
       const url = urlBuilder();
-      url.searchParams.append("ds", "remote-file");
-      url.searchParams.append("ds.url", "http://example1.com");
-      url.searchParams.append("ds.test", "test1");
-      url.searchParams.append("ds.test", "test2");
+      setHashParams(url, [
+        ["ds", "remote-file"],
+        ["ds.url", "http://example1.com"],
+        ["ds.test", "test1"],
+        ["ds.test", "test2"],
+      ]);
 
       expect(parseAppURLState(url)).toMatchObject({
         ds: "remote-file",
@@ -82,13 +97,15 @@ describe("app state url parser", () => {
       const start = toRFC3339String(now);
       const end = toRFC3339String({ sec: now.sec + 1000, nsec: 0 });
       const url = urlBuilder();
-      url.searchParams.append("ds", "foo");
-      url.searchParams.append("time", time);
-      url.searchParams.append("ds.bar", "barValue");
-      url.searchParams.append("ds.baz", "bazValue");
-      url.searchParams.append("ds.start", start);
-      url.searchParams.append("ds.end", end);
-      url.searchParams.append("ds.eventId", "dummyEventId");
+      setHashParams(url, [
+        ["ds", "foo"],
+        ["time", time],
+        ["ds.bar", "barValue"],
+        ["ds.baz", "bazValue"],
+        ["ds.start", start],
+        ["ds.end", end],
+        ["ds.eventId", "dummyEventId"],
+      ]);
 
       const parsed = parseAppURLState(url);
       expect(parsed).toMatchObject({
@@ -101,9 +118,11 @@ describe("app state url parser", () => {
     it("parses numeric epoch timestamp (seconds with nanoseconds)", () => {
       const url = urlBuilder();
       const dataSourceUrl = new URL(`http://${BasicBuilder.string()}.com`);
-      url.searchParams.append("ds", "remote-file");
-      url.searchParams.append("ds.url", dataSourceUrl.href);
-      url.searchParams.append("time", "1751378709.331000000");
+      setHashParams(url, [
+        ["ds", "remote-file"],
+        ["ds.url", dataSourceUrl.href],
+        ["time", "1751378709.331000000"],
+      ]);
 
       const parsed = parseAppURLState(url);
 
@@ -117,9 +136,11 @@ describe("app state url parser", () => {
     it("parses RFC3339 timestamp format", () => {
       const url = urlBuilder();
       const dataSourceUrl = new URL(`http://${BasicBuilder.string()}.com`);
-      url.searchParams.append("ds", "remote-file");
-      url.searchParams.append("ds.url", dataSourceUrl.href);
-      url.searchParams.append("time", "2025-07-01T14:05:09.331293771Z");
+      setHashParams(url, [
+        ["ds", "remote-file"],
+        ["ds.url", dataSourceUrl.href],
+        ["time", "2025-07-01T14:05:09.331293771Z"],
+      ]);
 
       const parsed = parseAppURLState(url);
 
@@ -146,7 +167,7 @@ describe("updateAppURLState", () => {
     const result = updateAppURLState(baseURL, urlState);
 
     expect(decodeURIComponent(result.href)).toEqual(
-      `${baseURL.origin}/?ds=${urlState.ds}&ds.url=${url}`,
+      `${baseURL.origin}/#ds=${urlState.ds}&ds.url=${url}`,
     );
   });
 
@@ -164,7 +185,7 @@ describe("updateAppURLState", () => {
     const result = updateAppURLState(baseURL, urlState);
 
     expect(decodeURIComponent(result.href)).toEqual(
-      `${baseURL.origin}/?ds=${urlState.ds}&ds.url=${urls[0]}&ds.url=${urls[1]}`,
+      `${baseURL.origin}/#ds=${urlState.ds}&ds.url=${urls[0]}&ds.url=${urls[1]}`,
     );
   });
 
@@ -180,7 +201,7 @@ describe("updateAppURLState", () => {
     const result = updateAppURLState(baseURL, urlState);
 
     expect(result.href).toEqual(
-      `${baseURL.origin}/?ds=${urlState.ds}&ds.${key}=${paramArray[0]}&ds.${key}=${paramArray[1]}`,
+      `${baseURL.origin}/#ds=${urlState.ds}&ds.${key}=${paramArray[0]}&ds.${key}=${paramArray[1]}`,
     );
   });
 
@@ -224,7 +245,7 @@ describe("updateAppURLState", () => {
       const result = updateAppURLState(baseURL, state);
 
       expect(result.href).toEqual(
-        `${baseURL.origin}/?ds=${state.ds}&ds.eventId=${eventId}&ds.url=${encodedURLFile}`,
+        `${baseURL.origin}/#ds=${state.ds}&ds.eventId=${eventId}&ds.url=${encodedURLFile}`,
       );
     });
   });

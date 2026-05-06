@@ -108,8 +108,10 @@ export default function Root(props: RootProps): React.JSX.Element {
   const [deepLinks] = useState(() => {
     // We treat presence of the `ds` or `layoutId` params as indicative of active state.
     const windowUrl = new URL(window.location.href);
-    const hasActiveURLState =
-      windowUrl.searchParams.has("ds") || windowUrl.searchParams.has("layoutId");
+    const hashParams = new URLSearchParams(
+      windowUrl.hash.startsWith("#") ? windowUrl.hash.slice(1) : windowUrl.hash,
+    );
+    const hasActiveURLState = hashParams.has("ds") || hashParams.has("layoutId");
     return hasActiveURLState ? [window.location.href] : desktopBridge.getDeepLinks();
   });
 
