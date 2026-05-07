@@ -8,11 +8,7 @@ import {
   MessageDataItemsByPath,
   useDecodeMessagePathsForMessagesByTopic,
 } from "@lichtblick/suite-base/components/MessagePathSyntax/useCachedGetMessagePathDataItems";
-import { useMessagePipeline } from "@lichtblick/suite-base/components/MessagePipeline";
-import { MessagePipelineContext } from "@lichtblick/suite-base/components/MessagePipeline/types";
 import { useSubscribeMessageRange } from "@lichtblick/suite-base/components/PanelExtensionAdapter";
-
-const selectPlayerPresence = (ctx: MessagePipelineContext) => ctx.playerState.presence;
 
 export function useDecodedMessageRange(
   topics: string[],
@@ -20,13 +16,13 @@ export function useDecodedMessageRange(
 ): MessageDataItemsByPath[] {
   const decodeMessagePathsForMessagesByTopic = useDecodeMessagePathsForMessagesByTopic(pathStrings);
   const subscribeMessageRange = useSubscribeMessageRange();
-  const playerPresence = useMessagePipeline(selectPlayerPresence);
 
   const [messagesByTopic, setMessagesByTopic] = useState<Record<string, MessageEvent[]>>({});
   const accumulatedRef = useRef<Record<string, MessageEvent[]>>({});
   const flushRef = useRef<ReturnType<typeof setTimeout> | undefined>();
 
   useEffect(() => {
+    console.log("Subscribing to message ranges for topics:", topics);
     const cancels: (() => void)[] = [];
 
     for (const topic of topics) {
@@ -66,7 +62,7 @@ export function useDecodedMessageRange(
         cancel();
       }
     };
-  }, [topics, subscribeMessageRange, playerPresence]);
+  }, [topics, subscribeMessageRange]);
 
   const decoded = useMemo(
     () => decodeMessagePathsForMessagesByTopic(messagesByTopic),
