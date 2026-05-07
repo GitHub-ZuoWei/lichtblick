@@ -1979,4 +1979,173 @@ describe("UserScriptPlayer", () => {
       expect(callCount("transform")).toBe(2);
     });
   });
+
+  describe("getBatchIterator", () => {
+    it("delegates to underlying player for non-script topics", async () => {
+      const fakePlayer = new FakePlayer();
+      const mockIterator = (async function* () {
+        yield {
+          type: "message-event" as const,
+          msgEvent: upstreamFirst,
+        };
+      })();
+      jest.spyOn(fakePlayer, "getBatchIterator").mockReturnValue(mockIterator);
+
+      const userScriptPlayer = new UserScriptPlayer(fakePlayer, defaultUserScriptActions);
+      setListenerHelper(userScriptPlayer);
+
+      const result = userScriptPlayer.getBatchIterator("/np_input");
+      expect(fakePlayer.getBatchIterator).toHaveBeenCalledWith("/np_input", undefined);
+      expect(result).toBe(mockIterator);
+    });
+
+    it("returns undefined for unknown topics when underlying player returns undefined", () => {
+      const fakePlayer = new FakePlayer();
+      const userScriptPlayer = new UserScriptPlayer(fakePlayer, defaultUserScriptActions);
+      setListenerHelper(userScriptPlayer);
+
+      const result = userScriptPlayer.getBatchIterator("/unknown_topic");
+      expect(result).toBeUndefined();
+    });
+
+    it("returns a transforming iterator for script output topics", async () => {
+      const fakePlayer = new FakePlayer();
+      const inputMessages: MessageEvent[] = [
+        {
+          topic: "/np_input",
+          receiveTime: { sec: 0, nsec: 1 },
+          message: { payload: "hello" },
+          schemaName: "foo",
+          sizeInBytes: 0,
+        },
+        {
+          topic: "/np_input",
+          receiveTime: { sec: 0, nsec: 2 },
+          message: { payload: "world" },
+          schemaName: "foo",
+          sizeInBytes: 0,
+        },
+      ];
+
+      // Mock the underlying player to return an iterator for the input topic
+      jest.spyOn(fakePlayer, "getBatchIterator").mockImplementation((topic) => {
+        if (topic === "/np_input") {
+          return (async function* () {
+            for (const msg of inputMessages) {
+              yield { type: "message-event" as const, msgEvent: msg };
+            }
+          })();
+        }
+        return undefined;
+      });
+
+      const userScriptPlayer = new UserScriptPlayer(fakePlayer, defaultUserScriptActions);
+
+      void userScriptPlayer.setUserScripts({
+        [nodeId]: { name: `${DEFAULT_STUDIO_SCRIPT_PREFIX}1`, sourceCode: nodeUserCode },
+      });
+
+      const [done] = setListenerHelper(userScriptPlayer);
+
+      await fakePlayer.emit({
+        activeData: {
+          ...basicPlayerState,
+          messages: [upstreamFirst],
+          currentTime: upstreamFirst.receiveTime,
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
+          datatypes: new Map(Object.entries(exampleDatatypes)),
+        },
+      });
+      await done;
+
+      // Now getBatchIterator should return a transforming iterator for the output topic
+      const outputTopic = `${DEFAULT_STUDIO_SCRIPT_PREFIX}1`;
+      const iterator = userScriptPlayer.getBatchIterator(outputTopic);
+      expect(iterator).toBeDefined();
+
+      // Consume the iterator and verify messages are transformed
+      const results: MessageEvent[] = [];
+      for await (const result of iterator!) {
+        if (result.type === "message-event") {
+          results.push(result.msgEvent);
+        }
+      }
+
+      expect(results).toHaveLength(2);
+      expect(results[0]!.topic).toBe(outputTopic);
+      expect(results[1]!.topic).toBe(outputTopic);
+    });
+
+    it("passes through stamp results from the underlying iterator", async () => {
+      const fakePlayer = new FakePlayer();
+      const stamp = { sec: 1, nsec: 0 };
+
+      jest.spyOn(fakePlayer, "getBatchIterator").mockImplementation((topic) => {
+        if (topic === "/np_input") {
+          return (async function* () {
+            yield { type: "stamp" as const, stamp };
+          })();
+        }
+        return undefined;
+      });
+
+      const userScriptPlayer = new UserScriptPlayer(fakePlayer, defaultUserScriptActions);
+
+      void userScriptPlayer.setUserScripts({
+        [nodeId]: { name: `${DEFAULT_STUDIO_SCRIPT_PREFIX}1`, sourceCode: nodeUserCode },
+      });
+
+      const [done] = setListenerHelper(userScriptPlayer);
+
+      await fakePlayer.emit({
+        activeData: {
+          ...basicPlayerState,
+          messages: [upstreamFirst],
+          currentTime: upstreamFirst.receiveTime,
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
+          datatypes: new Map(Object.entries(exampleDatatypes)),
+        },
+      });
+      await done;
+
+      const outputTopic = `${DEFAULT_STUDIO_SCRIPT_PREFIX}1`;
+      const iterator = userScriptPlayer.getBatchIterator(outputTopic);
+      expect(iterator).toBeDefined();
+
+      const results = [];
+      for await (const result of iterator!) {
+        results.push(result);
+      }
+
+      expect(results).toHaveLength(1);
+      expect(results[0]).toEqual({ type: "stamp", stamp });
+    });
+
+    it("returns undefined for output topics when input topic has no iterator", async () => {
+      const fakePlayer = new FakePlayer();
+
+      const userScriptPlayer = new UserScriptPlayer(fakePlayer, defaultUserScriptActions);
+
+      void userScriptPlayer.setUserScripts({
+        [nodeId]: { name: `${DEFAULT_STUDIO_SCRIPT_PREFIX}1`, sourceCode: nodeUserCode },
+      });
+
+      const [done] = setListenerHelper(userScriptPlayer);
+
+      await fakePlayer.emit({
+        activeData: {
+          ...basicPlayerState,
+          messages: [upstreamFirst],
+          currentTime: upstreamFirst.receiveTime,
+          topics: [{ name: "/np_input", schemaName: "std_msgs/Header" }],
+          datatypes: new Map(Object.entries(exampleDatatypes)),
+        },
+      });
+      await done;
+
+      const outputTopic = `${DEFAULT_STUDIO_SCRIPT_PREFIX}1`;
+      const iterator = userScriptPlayer.getBatchIterator(outputTopic);
+      expect(iterator).toBeUndefined();
+    });
+  });
 });

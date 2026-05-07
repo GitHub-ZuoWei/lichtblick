@@ -148,6 +148,11 @@ export default class UserScriptPlayer implements Player {
     inputsByOutputTopic: new Map(),
   });
 
+  // Shadow copy of script registrations keyed by output topic for synchronous access
+  // in getBatchIterator (which can't use the async MutexLocked).
+  // Updated in #resetWorkersUnlocked.
+  #outputTopicRegistrations = new Map<string, ScriptRegistration>();
+
   readonly #emitLock = new Mutex();
 
   // exposed as a static to allow testing to mock/replace
@@ -672,6 +677,7 @@ export default class UserScriptPlayer implements Player {
       scriptRegistration.terminate();
     }
     state.scriptRegistrations = [];
+    this.#outputTopicRegistrations.clear();
 
     const rosLib = await this.#getRosLib(state);
     const typesLib = await this.#getTypesLib(state);
@@ -759,6 +765,12 @@ export default class UserScriptPlayer implements Player {
 
     let changedTopicsRequireEmitState = false;
     state.scriptRegistrations = validScriptRegistrations;
+
+    // Populate shadow registry for synchronous access in getBatchIterator
+    for (const reg of validScriptRegistrations) {
+      this.#outputTopicRegistrations.set(reg.output.name, reg);
+    }
+
     const scriptTopics = state.scriptRegistrations.map(({ output }) => output);
     if (!_.isEqual(scriptTopics, this.#memoizedScriptTopics)) {
       this.#memoizedScriptTopics = scriptTopics;
@@ -1071,7 +1083,55 @@ export default class UserScriptPlayer implements Player {
     topic: string,
     options?: { start?: Time; end?: Time },
   ): AsyncIterableIterator<Readonly<IIterableSourceIteratorResult>> | undefined {
-    return this.#player.getBatchIterator(topic, options);
+    const registration = this.#outputTopicRegistrations.get(topic);
+    if (!registration) {
+      return this.#player.getBatchIterator(topic, options);
+    }
+
+    // For UserScript output topics, get the iterator for the first input topic
+    // and transform each message through the script's processBlockMessage worker.
+    const inputTopics = registration.inputs;
+    if (inputTopics.length === 0) {
+      return undefined;
+    }
+
+    const inputTopic = inputTopics[0]!;
+    const inputIterator = this.#player.getBatchIterator(inputTopic, options);
+    if (!inputIterator) {
+      return undefined;
+    }
+
+    const globalVariables = this.#globalVariables;
+    const reg = registration;
+    const iter = inputIterator;
+
+    async function* transformIterator(): AsyncIterableIterator<
+      Readonly<IIterableSourceIteratorResult>
+    > {
+      try {
+        for await (const result of iter) {
+          if (result.type !== "message-event") {
+            yield result;
+            continue;
+          }
+
+          const outputMessage = await reg.processBlockMessage(
+            result.msgEvent,
+            globalVariables,
+          );
+          if (outputMessage) {
+            yield {
+              type: "message-event" as const,
+              msgEvent: outputMessage,
+            };
+          }
+        }
+      } finally {
+        await iter.return?.();
+      }
+    }
+
+    return transformIterator();
   }
 
   public setPublishers(publishers: AdvertiseOptions[]): void {

@@ -85,13 +85,6 @@ export class CustomDatasetsBuilder implements IDatasetsBuilder {
 
     const msgEvents = activeData.messages;
     if (!this.#hasRangeSource && msgEvents.length > 0) {
-      if (didSeek) {
-        this.#pendingDispatch.push({
-          type: "reset-current-x",
-        });
-        this.#xCurrentBounds = undefined;
-      }
-
       // Read the x-axis values
       if (this.#xParsedPath) {
         const pathItems = parseXPathItems(msgEvents, this.#xParsedPath);
@@ -109,7 +102,7 @@ export class CustomDatasetsBuilder implements IDatasetsBuilder {
 
       const { actions: seriesActions, datasetsChanged: seriesChanged } = buildCurrentSeriesActions(
         this.#series,
-        { didSeek },
+        { didSeek, hasRangeSource: this.#hasRangeSource },
         (config) => {
           const mathFn = config.parsed.modifier ? mathFunctions[config.parsed.modifier] : undefined;
           return readMessagePathItems(msgEvents, config.parsed, mathFn);

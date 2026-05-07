@@ -80,7 +80,7 @@ export class PlotCoordinator extends EventEmitter<PlotCoordinatorEventTypes> {
   private readonly subscribeMessageRange: UseSubscribeMessageRange;
   private readonly rangeSubscriptionCancels = new Map<
     string,
-    { cancel: () => void; seriesKeys: ReadonlySet<SeriesConfigKey> }
+    { cancel: () => void; seriesKeys: ReadonlySet<SeriesConfigKey>; active: boolean }
   >();
   private startTime: Immutable<Time> | undefined;
   private seriesKeysByTopic = new Map<string, Set<SeriesConfigKey>>();
@@ -522,17 +522,22 @@ export class PlotCoordinator extends EventEmitter<PlotCoordinatorEventTypes> {
 
     // Start subscriptions only for new or changed topics
     for (const [topic, currentKeys] of seriesKeysByTopic) {
-      const existing = this.rangeSubscriptionCancels.get(topic)?.seriesKeys;
-      if (existing) {
-        if (!this.seriesKeysChanged(existing, currentKeys)) {
+      const existing = this.rangeSubscriptionCancels.get(topic);
+      if (existing?.seriesKeys) {
+        // Retry if previous subscription was inactive (no-op cancel from missing getBatchIterator)
+        if (!this.seriesKeysChanged(existing.seriesKeys, currentKeys) && existing.active) {
           continue;
         }
         this.cancelTopicSubscription(topic);
       }
 
+      // Detect no-op cancel: useSubscribeMessageRange returns `() => {}` when getBatchIterator
+      // returns undefined. We detect this by checking if onNewRangeIterator was ever called.
+      let rangeIteratorCalled = false;
       const cancel = this.subscribeMessageRange({
         topic,
         onNewRangeIterator: async (batchIterator) => {
+          rangeIteratorCalled = true;
           let isReset = true;
           for await (const batch of batchIterator) {
             if (this.isDestroyed()) {
@@ -548,7 +553,11 @@ export class PlotCoordinator extends EventEmitter<PlotCoordinatorEventTypes> {
           }
         },
       });
-      this.rangeSubscriptionCancels.set(topic, { cancel, seriesKeys: new Set(currentKeys) });
+      this.rangeSubscriptionCancels.set(topic, {
+        cancel,
+        seriesKeys: new Set(currentKeys),
+        active: rangeIteratorCalled,
+      });
     }
   }
 }

@@ -256,7 +256,12 @@ describe("PlotCoordinator", () => {
     });
 
     it("does not re-subscribe when the same topic and keys are unchanged", () => {
-      // Given
+      // Given — simulate an active subscription (onNewRangeIterator is called)
+      mockSubscribeMessageRange.mockImplementation(({ onNewRangeIterator }: { onNewRangeIterator: (iter: AsyncIterable<unknown>) => Promise<void> }) => {
+        // Simulate a real subscription that calls onNewRangeIterator
+        void onNewRangeIterator((async function* () { /* empty */ })());
+        return jest.fn();
+      });
       plotCoordinator["seriesKeysByTopic"] = PlotCoordinatorBuilder.seriesKeysByTopic([
         ["/foo", ["/foo.val"]],
       ]);
@@ -269,6 +274,25 @@ describe("PlotCoordinator", () => {
 
       // Then — no new subscription opened
       expect(mockSubscribeMessageRange).not.toHaveBeenCalled();
+    });
+
+    it("retries subscription when previous was inactive (no-op cancel)", () => {
+      // Given — first subscription returns no-op (onNewRangeIterator never called)
+      mockSubscribeMessageRange.mockReturnValue(jest.fn());
+      plotCoordinator["seriesKeysByTopic"] = PlotCoordinatorBuilder.seriesKeysByTopic([
+        ["/foo", ["/foo.val"]],
+      ]);
+      const state = PlayerBuilder.playerState({ activeData: PlayerBuilder.activeData() });
+      plotCoordinator.handlePlayerState(state);
+      mockSubscribeMessageRange.mockClear();
+
+      // When — same series, same state, but previous was inactive
+      plotCoordinator.handlePlayerState(state);
+
+      // Then — retries the subscription
+      expect(mockSubscribeMessageRange).toHaveBeenCalledWith(
+        expect.objectContaining({ topic: "/foo" }),
+      );
     });
   });
 
