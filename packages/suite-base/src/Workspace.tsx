@@ -91,7 +91,10 @@ import ICONS from "@lichtblick/suite-base/theme/icons";
 import { InjectedSidebarItem, Namespace, WorkspaceProps } from "@lichtblick/suite-base/types";
 import { parseAppURLState } from "@lichtblick/suite-base/util/appURLState";
 import useBroadcast from "@lichtblick/suite-base/util/broadcast/useBroadcast";
-import { fetchMcapMetadataHeader } from "@lichtblick/suite-base/util/fetchMcapMetadataHeader";
+import {
+  fetchSessionMcapUrls,
+  getSessionId,
+} from "@lichtblick/suite-base/util/fetchSessionMcapUrls";
 import isDesktopApp from "@lichtblick/suite-base/util/isDesktopApp";
 
 import { useWorkspaceActions } from "./context/Workspace/useWorkspaceActions";
@@ -495,35 +498,43 @@ function WorkspaceContent(props: WorkspaceProps): React.JSX.Element {
 
   const selectEvent = useEvents(selectSelectEvent);
 
-  // Check for X-Mcap-Metadata response header on the current page.
-  // If the header contains mcapUrls, override the ds.url query parameter.
-  const [headerChecked, setHeaderChecked] = useState(false);
+  // Check for `sessionid` query parameter. If present, fetch MCAP URLs from
+  // the session endpoint and use them instead of ds.url query params.
+  const [sessionChecked, setSessionChecked] = useState(false);
   useEffect(() => {
-    if (headerChecked) {
+    if (sessionChecked) {
+      return;
+    }
+
+    const sessionId = getSessionId();
+    if (sessionId == undefined) {
+      // No sessionid param — fall back to ds.url behavior immediately.
+      setSessionChecked(true);
       return;
     }
 
     void (async () => {
       try {
-        const metadata = await fetchMcapMetadataHeader();
-        if (metadata?.mcapUrls && metadata.mcapUrls.length > 0) {
-          log.info("Using mcapUrls from X-Mcap-Metadata header, overriding ds.url params");
+        const session = await fetchSessionMcapUrls(sessionId);
+        if (session.mcapUrls && session.mcapUrls.length > 0) {
+          log.info("Using mcapUrls from session endpoint, overriding ds.url params");
           setUnappliedSourceArgs({
             ds: "remote-file",
-            dsParams: { url: metadata.mcapUrls.join(",") },
+            dsParams: { url: session.mcapUrls.join(",") },
           });
         }
       } catch (error) {
-        log.warn("Error checking X-Mcap-Metadata header, falling back to URL params:", error);
+        log.error("Failed to load session:", error);
+        console.error("[Session Error]", error);
       } finally {
-        setHeaderChecked(true);
+        setSessionChecked(true);
       }
     })();
-  }, [headerChecked]);
+  }, [sessionChecked]);
 
-  // Load data source from URL (or from header override).
+  // Load data source from URL (or from session override).
   useEffect(() => {
-    if (!headerChecked) {
+    if (!sessionChecked) {
       return;
     }
     if (!unappliedSourceArgs) {
@@ -540,7 +551,7 @@ function WorkspaceContent(props: WorkspaceProps): React.JSX.Element {
       selectEvent(unappliedSourceArgs.dsParams?.eventId);
       setUnappliedSourceArgs({ ds: undefined, dsParams: undefined });
     }
-  }, [headerChecked, selectEvent, selectSource, unappliedSourceArgs, setUnappliedSourceArgs]);
+  }, [sessionChecked, selectEvent, selectSource, unappliedSourceArgs, setUnappliedSourceArgs]);
 
   const [unappliedTime, setUnappliedTime] = useState(
     targetUrlState ? { time: targetUrlState.time } : undefined,
