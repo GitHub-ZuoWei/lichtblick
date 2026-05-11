@@ -91,6 +91,7 @@ import ICONS from "@lichtblick/suite-base/theme/icons";
 import { InjectedSidebarItem, Namespace, WorkspaceProps } from "@lichtblick/suite-base/types";
 import { parseAppURLState } from "@lichtblick/suite-base/util/appURLState";
 import useBroadcast from "@lichtblick/suite-base/util/broadcast/useBroadcast";
+import { fetchMcapMetadataHeader } from "@lichtblick/suite-base/util/fetchMcapMetadataHeader";
 import isDesktopApp from "@lichtblick/suite-base/util/isDesktopApp";
 
 import { useWorkspaceActions } from "./context/Workspace/useWorkspaceActions";
@@ -493,8 +494,38 @@ function WorkspaceContent(props: WorkspaceProps): React.JSX.Element {
   );
 
   const selectEvent = useEvents(selectSelectEvent);
-  // Load data source from URL.
+
+  // Check for X-Mcap-Metadata response header on the current page.
+  // If the header contains mcapUrls, override the ds.url query parameter.
+  const [headerChecked, setHeaderChecked] = useState(false);
   useEffect(() => {
+    if (headerChecked) {
+      return;
+    }
+
+    void (async () => {
+      try {
+        const metadata = await fetchMcapMetadataHeader();
+        if (metadata?.mcapUrls && metadata.mcapUrls.length > 0) {
+          log.info("Using mcapUrls from X-Mcap-Metadata header, overriding ds.url params");
+          setUnappliedSourceArgs({
+            ds: "remote-file",
+            dsParams: { url: metadata.mcapUrls.join(",") },
+          });
+        }
+      } catch (error) {
+        log.warn("Error checking X-Mcap-Metadata header, falling back to URL params:", error);
+      } finally {
+        setHeaderChecked(true);
+      }
+    })();
+  }, [headerChecked]);
+
+  // Load data source from URL (or from header override).
+  useEffect(() => {
+    if (!headerChecked) {
+      return;
+    }
     if (!unappliedSourceArgs) {
       return;
     }
@@ -509,7 +540,7 @@ function WorkspaceContent(props: WorkspaceProps): React.JSX.Element {
       selectEvent(unappliedSourceArgs.dsParams?.eventId);
       setUnappliedSourceArgs({ ds: undefined, dsParams: undefined });
     }
-  }, [selectEvent, selectSource, unappliedSourceArgs, setUnappliedSourceArgs]);
+  }, [headerChecked, selectEvent, selectSource, unappliedSourceArgs, setUnappliedSourceArgs]);
 
   const [unappliedTime, setUnappliedTime] = useState(
     targetUrlState ? { time: targetUrlState.time } : undefined,
