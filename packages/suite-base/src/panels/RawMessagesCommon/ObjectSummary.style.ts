@@ -3,9 +3,14 @@
 
 import { makeStyles } from "tss-react/mui";
 
+import { JSON_TREE_THEME_COLORS } from "@lichtblick/suite-base/util/constants";
+
 export const useStyles = makeStyles()((theme) => ({
   summary: {
-    color: theme.palette.text.secondary,
+    color: JSON_TREE_THEME_COLORS[theme.palette.mode].string,
     paddingLeft: "0.5em",
+    "[data-expanded] &": {
+      color: theme.palette.text.secondary,
+    },
   },
 }));

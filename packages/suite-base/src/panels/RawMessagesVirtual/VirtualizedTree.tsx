@@ -5,6 +5,7 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { memo, useCallback, useMemo, useRef } from "react";
 
@@ -20,10 +21,13 @@ import {
 import { useStyles } from "./VirtualizedTree.style";
 import { flattenTreeData } from "./flattenTreeData";
 
+const ICON_STYLE = { fontSize: 16 } as const;
+
 export const VirtualizedTree = memo(function VirtualizedTree({
   data,
   expandedNodes,
   onToggleExpand,
+  onExpandAllChildren,
   fontSize,
   renderValue,
 }: PropsVirtualizedTree) {
@@ -66,6 +70,7 @@ export const VirtualizedTree = memo(function VirtualizedTree({
               data-index={virtualRow.index}
               ref={virtualizer.measureElement}
               className={classes.row}
+              data-expanded={node.isExpandable && expandedNodes.has(node.key) ? "true" : undefined}
               style={{
                 transform: `translateY(${virtualRow.start}px)`,
                 paddingLeft: node.depth * TREE_NODE_INDENTATION,
@@ -93,7 +98,21 @@ export const VirtualizedTree = memo(function VirtualizedTree({
                 )}
               </span>
               <span className={classes.key}>{node.label}</span>
-              <div className={classes.valueContainer}>{renderValue(node)}</div>
+              <div className={classes.valueContainer}>
+                {renderValue(node)}
+                {node.isExpandable && onExpandAllChildren && (
+                  <button
+                    className={classes.expandAllButton}
+                    onClick={() => {
+                      onExpandAllChildren(node.key);
+                    }}
+                    title="Expand all children"
+                    aria-label={`Expand all children of ${node.label}`}
+                  >
+                    <UnfoldMoreIcon style={ICON_STYLE} />
+                  </button>
+                )}
+              </div>
             </div>
           );
         })}

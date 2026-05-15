@@ -132,6 +132,7 @@ export type PropsVirtualizedTree = {
   data: unknown;
   expandedNodes: Set<string>;
   onToggleExpand: (keyPath: string) => void;
+  onExpandAllChildren?: (keyPath: string) => void;
   fontSize?: number;
   renderValue: (node: TreeNode) => React.ReactNode;
 };
@@ -193,6 +194,7 @@ export type UseSharedRawMessagesLogicResult = {
   onToggleDiff: () => void;
   onToggleExpandAll: () => void;
   onLabelClick: (keypath: (string | number)[]) => void;
+  onExpandAllChildren: (keypath: (string | number)[]) => void;
 };
 
 /** useRenderers */

@@ -4,9 +4,10 @@
 import { makeStyles } from "tss-react/mui";
 
 import { JSON_TREE_THEME_COLORS } from "@lichtblick/suite-base/util/constants";
+import { expandAllButtonStyles } from "@lichtblick/suite-base/panels/RawMessagesCommon/index.style";
 import { customTypography } from "@lichtblick/theme";
 
-export const useStyles = makeStyles()((theme) => {
+export const useStyles = makeStyles<void, "expandAllButton">()((theme, _params, classes) => {
   // Use the same color scheme as useJsonTreeTheme for consistency with RawMessages
   const colors = JSON_TREE_THEME_COLORS[theme.palette.mode];
 
@@ -34,6 +35,13 @@ export const useStyles = makeStyles()((theme) => {
       top: 0,
       left: 0,
       width: "100%",
+      [`&:hover .${classes.expandAllButton}`]: {
+        opacity: 0.6,
+        pointerEvents: "auto",
+      },
+      [`&:hover .${classes.expandAllButton}:hover`]: {
+        opacity: 1,
+      },
     },
     expandButton: {
       cursor: "pointer",
@@ -86,5 +94,6 @@ export const useStyles = makeStyles()((theme) => {
       color: theme.palette.text.secondary,
       fontStyle: "italic",
     },
+    expandAllButton: expandAllButtonStyles(theme),
   };
 });

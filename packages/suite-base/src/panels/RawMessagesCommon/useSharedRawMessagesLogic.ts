@@ -20,7 +20,12 @@ import type {
   SharedConfig,
   UseSharedRawMessagesLogicResult,
 } from "./types";
-import { dataWithoutWrappingArray, generateDeepKeyPaths, toggleExpansion } from "./utils";
+import {
+  dataWithoutWrappingArray,
+  generateDeepKeyPaths,
+  toggleExpandAllDescendants,
+  toggleExpansion,
+} from "./utils";
 
 const LATEST_PER_RENDER_TICK_SAMPLING = Object.freeze({
   mode: "latest-per-render-tick" as const,
@@ -143,6 +148,15 @@ export function useSharedRawMessagesLogic<T extends SharedConfig>({
     [nodes],
   );
 
+  const onExpandAllChildren = useCallback(
+    (keypath: (string | number)[]) => {
+      setExpansion((old) =>
+        toggleExpandAllDescendants(old, nodes, keypath.join(PATH_NAME_AGGREGATOR)),
+      );
+    },
+    [nodes],
+  );
+
   useEffect(() => {
     saveConfig({ expansion } as Partial<T>);
   }, [expansion, saveConfig]);
@@ -162,5 +176,6 @@ export function useSharedRawMessagesLogic<T extends SharedConfig>({
     onToggleDiff,
     onToggleExpandAll,
     onLabelClick,
+    onExpandAllChildren,
   };
 }

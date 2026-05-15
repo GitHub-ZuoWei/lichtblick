@@ -72,6 +72,59 @@ export function toggleExpansion(
   };
 }
 
+/*
+ * Calculate the new expansion state after toggling all descendants of `key`.
+ * The node at `key` always stays expanded; its descendants are toggled between
+ * all-expanded and all-collapsed.
+ */
+export function toggleExpandAllDescendants(
+  state: NodeExpansion | undefined,
+  paths: Set<string>,
+  key: string,
+): NodeExpansion {
+  const suffix = `${PATH_NAME_AGGREGATOR}${key}`;
+  const isDescendant = (k: string) => k.endsWith(suffix);
+
+  // Determine if all descendants are currently expanded
+  let allDescendantsExpanded = state !== "none" && state != undefined;
+  if (allDescendantsExpanded && state !== "all") {
+    for (const k of paths) {
+      if (isDescendant(k) && (state as Record<string, NodeState>)[k] !== NodeState.Expanded) {
+        allDescendantsExpanded = false;
+        break;
+      }
+    }
+  }
+
+  // Materialise the current state into a mutable record
+  const base: Record<string, NodeState> = {};
+  if (state === "all") {
+    for (const k of paths) {
+      base[k] = NodeState.Expanded;
+    }
+  } else if (state == undefined || state === "none") {
+    for (const k of paths) {
+      base[k] = NodeState.Collapsed;
+    }
+  } else {
+    for (const k of paths) {
+      base[k] = state[k] ?? NodeState.Collapsed;
+    }
+  }
+
+  const nextChildState = allDescendantsExpanded ? NodeState.Collapsed : NodeState.Expanded;
+
+  for (const k of paths) {
+    if (k === key) {
+      base[k] = NodeState.Expanded;
+    } else if (isDescendant(k)) {
+      base[k] = nextChildState;
+    }
+  }
+
+  return base;
+}
+
 /**
  * Recursively traverses all keypaths in obj, for use in JSON tree expansion.
  */

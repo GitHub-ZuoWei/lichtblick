@@ -59,6 +59,7 @@ const RawMessagesVirtual = (props: PropsRawMessagesVirtual): React.JSX.Element =
     onToggleDiff,
     onToggleExpandAll,
     onLabelClick,
+    onExpandAllChildren,
   } = useSharedRawMessagesLogic({
     config,
     saveConfig,
@@ -76,18 +77,30 @@ const RawMessagesVirtual = (props: PropsRawMessagesVirtual): React.JSX.Element =
     openSiblingPanel,
   });
 
-  // VirtualizedTree-specific logic
+  // VirtualizedTree-specific logic: parse a string keyPath back into a typed array
+  const parseKeyPath = useCallback(
+    (keyPath: string): (string | number)[] =>
+      keyPath.split(PATH_NAME_AGGREGATOR).map((key) => {
+        const num = Number(key);
+        return Number.isNaN(num) ? key : num;
+      }),
+    [],
+  );
+
   const handleToggleExpand = useCallback(
     (keyPath: string) => {
-      onLabelClick(
-        keyPath.split(PATH_NAME_AGGREGATOR).map((key) => {
-          const num = Number(key);
-          return Number.isNaN(num) ? key : num;
-        }),
-      );
+      onLabelClick(parseKeyPath(keyPath));
     },
-    [onLabelClick],
+    [onLabelClick, parseKeyPath],
   );
+
+  const handleExpandAllChildren = useCallback(
+    (keyPath: string) => {
+      onExpandAllChildren(parseKeyPath(keyPath));
+    },
+    [onExpandAllChildren, parseKeyPath],
+  );
+
   const baseItemRef = useRef(baseItem);
   baseItemRef.current = baseItem;
 
@@ -243,6 +256,7 @@ const RawMessagesVirtual = (props: PropsRawMessagesVirtual): React.JSX.Element =
             data={diffEnabled ? diff : data}
             expandedNodes={expandedNodesSet}
             onToggleExpand={handleToggleExpand}
+            onExpandAllChildren={handleExpandAllChildren}
             fontSize={fontSize}
             renderValue={(node: TreeNode) => memoizedRenderValue(node, data)}
           />
@@ -278,6 +292,7 @@ const RawMessagesVirtual = (props: PropsRawMessagesVirtual): React.JSX.Element =
     diffMethod,
     diffTopicPath,
     expandedNodesSet,
+    handleExpandAllChildren,
     handleToggleExpand,
     memoizedRenderValue,
     saveConfig,

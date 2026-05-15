@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright (C) 2023-2026 Bayerische Motoren Werke Aktiengesellschaft (BMW AG)<lichtblick@bmwgroup.com>
 // SPDX-License-Identifier: MPL-2.0
 
+import UnfoldMoreIcon from "@mui/icons-material/UnfoldMore";
 import { Checkbox, FormControlLabel, Typography, useTheme } from "@mui/material";
 import * as _ from "lodash-es";
 import { useCallback, useMemo } from "react";
@@ -45,6 +46,8 @@ import {
 } from "@lichtblick/suite-base/panels/RawMessagesCommon/utils";
 import { useJsonTreeTheme } from "@lichtblick/suite-base/util/globalConstants";
 
+const ICON_STYLE = { fontSize: 16 } as const;
+
 function RawMessages(props: PropsRawMessages) {
   const {
     palette: { mode: themePreference },
@@ -69,6 +72,7 @@ function RawMessages(props: PropsRawMessages) {
     onToggleDiff,
     onToggleExpandAll,
     onLabelClick,
+    onExpandAllChildren,
   } = useSharedRawMessagesLogic({
     config,
     saveConfig,
@@ -88,14 +92,42 @@ function RawMessages(props: PropsRawMessages) {
   });
 
   const defaultGetItemString = useGetItemStringWithTimezone();
+
   const getItemString = useMemo(
     () =>
       diffEnabled
         ? (_type: string, data: DiffObject, itemType: React.ReactNode) => (
             <DiffStats data={data} itemType={itemType} />
           )
-        : defaultGetItemString,
-    [defaultGetItemString, diffEnabled],
+        : (
+            type: string,
+            data: unknown,
+            itemType: React.ReactNode,
+            itemString: string,
+            keyPath: (string | number)[],
+          ) => (
+            <span className={classes.itemStringWrapper}>
+              {defaultGetItemString(type, data, itemType, itemString)}
+              <button
+                className={classes.expandAllButton}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onExpandAllChildren(keyPath);
+                }}
+                title="Expand all children"
+                aria-label="Expand all children"
+              >
+                <UnfoldMoreIcon style={ICON_STYLE} />
+              </button>
+            </span>
+          ),
+    [
+      classes.expandAllButton,
+      classes.itemStringWrapper,
+      defaultGetItemString,
+      diffEnabled,
+      onExpandAllChildren,
+    ],
   );
 
   const renderSingleTopicOrDiffOutput = useCallback(() => {

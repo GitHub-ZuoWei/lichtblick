@@ -1,19 +1,52 @@
 // SPDX-FileCopyrightText: Copyright (C) 2023-2026 Bayerische Motoren Werke Aktiengesellschaft (BMW AG)<lichtblick@bmwgroup.com>
 // SPDX-License-Identifier: MPL-2.0
+import { Theme } from "@mui/material";
 import { makeStyles } from "tss-react/mui";
 
 import { customTypography } from "@lichtblick/theme";
 
-export const useStylesRawMessages = makeStyles()((theme) => ({
-  topic: {
-    fontFamily: theme.typography.body1.fontFamily,
-    fontFeatureSettings: `${customTypography.fontFeatureSettings}, "zero"`,
-  },
-  hoverObserver: {
+/** Shared base styles for the expand-all-children button (used in both panels). */
+export const expandAllButtonStyles = (theme: Theme) =>
+  ({
+    opacity: 0,
+    pointerEvents: "none" as const,
+    cursor: "pointer",
+    background: "none",
+    border: "none",
+    padding: 0,
+    color: "inherit",
     display: "inline-flex",
     alignItems: "center",
-  },
-}));
+    verticalAlign: "middle",
+    marginLeft: theme.spacing(0.5),
+    fontSize: theme.typography.pxToRem(16),
+    transition: "opacity 0.15s",
+  }) as const;
+
+export const useStylesRawMessages = makeStyles<void, "expandAllButton">()(
+  (theme, _params, classes) => ({
+    topic: {
+      fontFamily: theme.typography.body1.fontFamily,
+      fontFeatureSettings: `${customTypography.fontFeatureSettings}, "zero"`,
+    },
+    hoverObserver: {
+      display: "inline-flex",
+      alignItems: "center",
+    },
+    itemStringWrapper: {
+      display: "inline-flex",
+      alignItems: "center",
+      [`&:hover .${classes.expandAllButton}`]: {
+        opacity: 0.6,
+        pointerEvents: "auto" as const,
+      },
+      [`&:hover .${classes.expandAllButton}:hover`]: {
+        opacity: 1,
+      },
+    },
+    expandAllButton: expandAllButtonStyles(theme),
+  }),
+);
 
 export const useStylesRawMessagesVirtual = makeStyles()((theme) => ({
   topic: {
