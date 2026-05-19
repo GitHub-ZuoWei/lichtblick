@@ -853,7 +853,9 @@ describe("VirtualizedTree", () => {
       });
 
       // Then
-      expect(container.querySelector("[aria-label^='Expand all children']")).not.toBeInTheDocument();
+      expect(
+        container.querySelector("[aria-label^='Expand all children']"),
+      ).not.toBeInTheDocument();
     });
 
     it("should not render expand-all button when onExpandAllChildren is not provided", () => {
@@ -876,7 +878,9 @@ describe("VirtualizedTree", () => {
       });
 
       // Then
-      expect(container.querySelector("[aria-label^='Expand all children']")).not.toBeInTheDocument();
+      expect(
+        container.querySelector("[aria-label^='Expand all children']"),
+      ).not.toBeInTheDocument();
     });
   });
 });
