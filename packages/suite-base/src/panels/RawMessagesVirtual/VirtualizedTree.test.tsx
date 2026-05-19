@@ -775,4 +775,108 @@ describe("VirtualizedTree", () => {
       expect(rows).toHaveLength(1);
     });
   });
+
+  describe("when onExpandAllChildren is provided", () => {
+    it("should render expand-all button for expandable nodes", () => {
+      // Given
+      const data = { nested: { value: BasicBuilder.string() } };
+      const expandedNodes = new Set<string>();
+      const mockOnExpandAllChildren = jest.fn();
+
+      useVirtualizer.mockReturnValue({
+        getVirtualItems: jest.fn(() => [{ index: 0, key: "0", size: 24, start: 0 }]),
+        getTotalSize: jest.fn(() => 24),
+        scrollToIndex: jest.fn(),
+        measureElement: jest.fn(),
+      });
+
+      // When
+      renderVirtualizedTree({
+        data,
+        expandedNodes,
+        onToggleExpand: mockOnToggleExpand,
+        onExpandAllChildren: mockOnExpandAllChildren,
+      });
+
+      // Then
+      expect(screen.getByLabelText("Expand all children of nested")).toBeInTheDocument();
+    });
+
+    it("should call onExpandAllChildren with node key when expand-all button is clicked", () => {
+      // Given
+      const data = { nested: { value: BasicBuilder.string() } };
+      const expandedNodes = new Set<string>();
+      const mockOnExpandAllChildren = jest.fn();
+
+      useVirtualizer.mockReturnValue({
+        getVirtualItems: jest.fn(() => [{ index: 0, key: "0", size: 24, start: 0 }]),
+        getTotalSize: jest.fn(() => 24),
+        scrollToIndex: jest.fn(),
+        measureElement: jest.fn(),
+      });
+
+      // When
+      renderVirtualizedTree({
+        data,
+        expandedNodes,
+        onToggleExpand: mockOnToggleExpand,
+        onExpandAllChildren: mockOnExpandAllChildren,
+      });
+
+      const expandAllButton = screen.getByLabelText("Expand all children of nested");
+      fireEvent.click(expandAllButton);
+
+      // Then
+      expect(mockOnExpandAllChildren).toHaveBeenCalledTimes(1);
+      expect(mockOnExpandAllChildren).toHaveBeenCalledWith("nested");
+    });
+
+    it("should not render expand-all button for non-expandable nodes", () => {
+      // Given
+      const data = { primitive: BasicBuilder.string() };
+      const expandedNodes = new Set<string>();
+      const mockOnExpandAllChildren = jest.fn();
+
+      useVirtualizer.mockReturnValue({
+        getVirtualItems: jest.fn(() => [{ index: 0, key: "0", size: 24, start: 0 }]),
+        getTotalSize: jest.fn(() => 24),
+        scrollToIndex: jest.fn(),
+        measureElement: jest.fn(),
+      });
+
+      // When
+      const { container } = renderVirtualizedTree({
+        data,
+        expandedNodes,
+        onToggleExpand: mockOnToggleExpand,
+        onExpandAllChildren: mockOnExpandAllChildren,
+      });
+
+      // Then
+      expect(container.querySelector("[aria-label^='Expand all children']")).not.toBeInTheDocument();
+    });
+
+    it("should not render expand-all button when onExpandAllChildren is not provided", () => {
+      // Given
+      const data = { nested: { value: BasicBuilder.string() } };
+      const expandedNodes = new Set<string>();
+
+      useVirtualizer.mockReturnValue({
+        getVirtualItems: jest.fn(() => [{ index: 0, key: "0", size: 24, start: 0 }]),
+        getTotalSize: jest.fn(() => 24),
+        scrollToIndex: jest.fn(),
+        measureElement: jest.fn(),
+      });
+
+      // When
+      const { container } = renderVirtualizedTree({
+        data,
+        expandedNodes,
+        onToggleExpand: mockOnToggleExpand,
+      });
+
+      // Then
+      expect(container.querySelector("[aria-label^='Expand all children']")).not.toBeInTheDocument();
+    });
+  });
 });

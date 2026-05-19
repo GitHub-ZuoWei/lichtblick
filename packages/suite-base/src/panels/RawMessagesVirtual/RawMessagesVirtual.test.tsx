@@ -49,6 +49,7 @@ function createMockSharedLogic(
     onToggleDiff: jest.fn(),
     onToggleExpandAll: jest.fn(),
     onLabelClick: jest.fn(),
+    onExpandAllChildren: jest.fn(),
     ...overrides,
   };
 }

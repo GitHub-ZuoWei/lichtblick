@@ -146,4 +146,41 @@ describe("given useSharedRawMessagesLogic", () => {
       });
     });
   });
+
+  describe("when expand all children is triggered", () => {
+    it("then expands all descendants of the given keypath", () => {
+      const { result, saveConfig } = setup({
+        config: {
+          expansion: "none",
+        },
+      });
+
+      act(() => {
+        result.current.onExpandAllChildren(["field1"]);
+      });
+
+      // After expanding all children, expansion should become an object state
+      expect(typeof result.current.expansion).toBe("object");
+
+      // The hook persists expansion via saveConfig
+      expect(saveConfig).toHaveBeenCalledWith({
+        expansion: expect.any(Object),
+      });
+    });
+
+    it("then keeps the target node expanded", () => {
+      const { result } = setup({
+        config: {
+          expansion: "none",
+        },
+      });
+
+      act(() => {
+        result.current.onExpandAllChildren(["parent", "child"]);
+      });
+
+      // The expansion state should be an object (toggled from "none")
+      expect(typeof result.current.expansion).toBe("object");
+    });
+  });
 });

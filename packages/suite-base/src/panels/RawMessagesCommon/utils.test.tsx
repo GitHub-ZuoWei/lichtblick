@@ -20,6 +20,7 @@ import {
   getValueLabels,
   getValueString,
   isSingleElemArray,
+  toggleExpandAllDescendants,
   toggleExpansion,
 } from "@lichtblick/suite-base/panels/RawMessagesCommon/utils";
 import { BasicBuilder } from "@lichtblick/test-builders";
@@ -84,6 +85,141 @@ describe("toggleExpansion", () => {
       [`grandchild${PATH_NAME_AGGREGATOR}child${PATH_NAME_AGGREGATOR}key1`]: NodeState.Expanded,
       key2: NodeState.Collapsed,
     });
+  });
+});
+
+describe("toggleExpandAllDescendants", () => {
+  const PATH_NAME_AGGREGATOR = "~";
+
+  it("should expand all descendants when state is undefined", () => {
+    // GIVEN
+    const key = "root";
+    const childKey = `child${PATH_NAME_AGGREGATOR}${key}`;
+    const grandchildKey = `grandchild${PATH_NAME_AGGREGATOR}${key}`;
+    const unrelatedKey = "unrelated";
+    const paths = new Set([key, childKey, grandchildKey, unrelatedKey]);
+
+    // WHEN
+    const result = toggleExpandAllDescendants(undefined, paths, key);
+
+    // THEN
+    expect(result[key]).toBe(NodeState.Expanded);
+    expect(result[childKey]).toBe(NodeState.Expanded);
+    expect(result[grandchildKey]).toBe(NodeState.Expanded);
+    expect(result[unrelatedKey]).toBe(NodeState.Collapsed);
+  });
+
+  it("should expand all descendants when state is 'none'", () => {
+    // GIVEN
+    const key = "root";
+    const childKey = `child${PATH_NAME_AGGREGATOR}${key}`;
+    const paths = new Set([key, childKey]);
+
+    // WHEN
+    const result = toggleExpandAllDescendants("none", paths, key);
+
+    // THEN
+    expect(result[key]).toBe(NodeState.Expanded);
+    expect(result[childKey]).toBe(NodeState.Expanded);
+  });
+
+  it("should collapse all descendants when state is 'all' (all already expanded)", () => {
+    // GIVEN
+    const key = "root";
+    const childKey = `child${PATH_NAME_AGGREGATOR}${key}`;
+    const grandchildKey = `grandchild${PATH_NAME_AGGREGATOR}${key}`;
+    const unrelatedKey = "unrelated";
+    const paths = new Set([key, childKey, grandchildKey, unrelatedKey]);
+
+    // WHEN
+    const result = toggleExpandAllDescendants("all", paths, key);
+
+    // THEN
+    expect(result[key]).toBe(NodeState.Expanded);
+    expect(result[childKey]).toBe(NodeState.Collapsed);
+    expect(result[grandchildKey]).toBe(NodeState.Collapsed);
+    expect(result[unrelatedKey]).toBe(NodeState.Expanded);
+  });
+
+  it("should expand descendants when some are collapsed in record state", () => {
+    // GIVEN
+    const key = "root";
+    const childKey = `child${PATH_NAME_AGGREGATOR}${key}`;
+    const grandchildKey = `grandchild${PATH_NAME_AGGREGATOR}${key}`;
+    const paths = new Set([key, childKey, grandchildKey]);
+    const state: NodeExpansion = {
+      [key]: NodeState.Expanded,
+      [childKey]: NodeState.Expanded,
+      [grandchildKey]: NodeState.Collapsed,
+    };
+
+    // WHEN
+    const result = toggleExpandAllDescendants(state, paths, key);
+
+    // THEN
+    expect(result[key]).toBe(NodeState.Expanded);
+    expect(result[childKey]).toBe(NodeState.Expanded);
+    expect(result[grandchildKey]).toBe(NodeState.Expanded);
+  });
+
+  it("should collapse descendants when all are already expanded in record state", () => {
+    // GIVEN
+    const key = "root";
+    const childKey = `child${PATH_NAME_AGGREGATOR}${key}`;
+    const grandchildKey = `grandchild${PATH_NAME_AGGREGATOR}${key}`;
+    const paths = new Set([key, childKey, grandchildKey]);
+    const state: NodeExpansion = {
+      [key]: NodeState.Expanded,
+      [childKey]: NodeState.Expanded,
+      [grandchildKey]: NodeState.Expanded,
+    };
+
+    // WHEN
+    const result = toggleExpandAllDescendants(state, paths, key);
+
+    // THEN
+    expect(result[key]).toBe(NodeState.Expanded);
+    expect(result[childKey]).toBe(NodeState.Collapsed);
+    expect(result[grandchildKey]).toBe(NodeState.Collapsed);
+  });
+
+  it("should not affect unrelated paths", () => {
+    // GIVEN
+    const key = "root";
+    const childKey = `child${PATH_NAME_AGGREGATOR}${key}`;
+    const otherKey = "other";
+    const otherChildKey = `child${PATH_NAME_AGGREGATOR}${otherKey}`;
+    const paths = new Set([key, childKey, otherKey, otherChildKey]);
+    const state: NodeExpansion = {
+      [key]: NodeState.Expanded,
+      [childKey]: NodeState.Collapsed,
+      [otherKey]: NodeState.Collapsed,
+      [otherChildKey]: NodeState.Collapsed,
+    };
+
+    // WHEN
+    const result = toggleExpandAllDescendants(state, paths, key);
+
+    // THEN
+    expect(result[key]).toBe(NodeState.Expanded);
+    expect(result[childKey]).toBe(NodeState.Expanded);
+    expect(result[otherKey]).toBe(NodeState.Collapsed);
+    expect(result[otherChildKey]).toBe(NodeState.Collapsed);
+  });
+
+  it("should always keep the target key expanded", () => {
+    // GIVEN
+    const key = "root";
+    const paths = new Set([key]);
+    const state: NodeExpansion = {
+      [key]: NodeState.Collapsed,
+    };
+
+    // WHEN
+    const result = toggleExpandAllDescendants(state, paths, key);
+
+    // THEN
+    expect(result[key]).toBe(NodeState.Expanded);
   });
 });
 
