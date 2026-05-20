@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { test, expect } from "../../../../fixtures/electron";
 import { loadFiles } from "../../../../fixtures/load-files";
+import { Panels, Sidebar } from "../../../../page-objects";
 
 const MCAP_FILE = "example-converter.mcap";
 const EXTENSION_FILE = "lichtblickteamctw.message-converter-extension-0.0.2.foxe";
@@ -14,6 +15,9 @@ const EXTENSION_FILE = "lichtblickteamctw.message-converter-extension-0.0.2.foxe
  * THEN the topics should be visible on the settings tree
  */
 test("open 3D panel after loading a mcap file", async ({ mainWindow }) => {
+  const panels = new Panels(mainWindow);
+  const sidebar = new Sidebar(mainWindow);
+
   /// Given
   await loadFiles({
     mainWindow,
@@ -26,9 +30,8 @@ test("open 3D panel after loading a mcap file", async ({ mainWindow }) => {
   });
 
   // When
-  await mainWindow.getByTestId("AddPanelButton").click();
-  await mainWindow.getByTestId("panel-menu-item 3D").click();
-  await mainWindow.getByTestId("panel-settings-left").click();
+  await panels.addPanel("3D");
+  await sidebar.openPanelSettingsTab();
   await mainWindow.getByText("3D").nth(0).click();
 
   // Then

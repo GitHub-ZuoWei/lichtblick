@@ -5,6 +5,7 @@ import { Page } from "playwright";
 
 import { test, expect } from "../../../fixtures/electron";
 import { loadFiles } from "../../../fixtures/load-files";
+import { DataSourceDialog, Sidebar } from "../../../page-objects";
 
 const LAYOUT_FILE = "imported-layout.json";
 
@@ -32,8 +33,8 @@ test("makes changes to layout and then reverts them", async ({ mainWindow }) => 
   });
 
   // When
-  await mainWindow.getByTestId("DataSourceDialog").getByTestId("CloseIcon").click();
-  await mainWindow.getByTestId("layouts-left").click();
+  await new DataSourceDialog(mainWindow).close();
+  await new Sidebar(mainWindow).openLayoutsTab();
 
   // Then
   const importedLayout = mainWindow.getByRole("button", { name: "imported-layout" });

@@ -96,17 +96,26 @@ install-multiple-extensions.web.spec.ts;
   │   │   ├── extension/             # Tests for extension
   │   │   ├── panel/                 # Tests for panels
   │   │   ├── utils/                 # Shared functions
-  │   │   ├── desktop-setup.ts       # Pré script to setup desktop tests
-  │   │   ├── desktop-teardown.ts    # Pré script to cleanup desktop tests
+  │   │   ├── desktop-setup.ts       # Pre-script to setup desktop tests
+  │   │   ├── desktop-teardown.ts    # Pre-script to cleanup desktop tests
   │   │   └── playwright.config.ts   # Desktop Playwright configuration
   │   └── web/                       # Web e2e tests
   │       ├── open-files/            # Tests for open files via URL
   │       │   ├── open-mcap-via-url.web.spec.ts
   │       │   └── ...web.spec.ts
   │       ├── utils/                 # Shared functions
-  │       ├── web-setup.ts           # Pré script to setup web tests
-  │       ├── web-teardown.ts        # Pré script to cleanup web tests
+  │       ├── web-setup.ts           # Pre-script to setup web tests
+  │       ├── web-teardown.ts        # Pre-script to cleanup web tests
   │       └── playwright.config.ts   # Web Playwright configuration
+  ├── page-objects/                   # Page Object Models for UI abstraction
+  │   ├── data-source-dialog.ts      # DataSourceDialog interactions
+  │   ├── sidebar.ts                 # Left/right sidebar navigation
+  │   ├── player-controls.ts         # Playback controls (play, pause, seek)
+  │   ├── layout-manager.ts          # Layout creation and management
+  │   ├── extension-manager.ts       # Extension install/uninstall workflows
+  │   ├── app-menu.ts                # Application menu (File, View)
+  │   ├── panels.ts                  # Panel add/configure operations
+  │   └── index.ts                   # Barrel export
   ├── fixtures/                      # Fixtures for testing (e.g. data mocks)
   ├── helpers/                       # Generic functions useful for testing
   ├── reports/                       # Automatically generated test reports
@@ -116,4 +125,4 @@ install-multiple-extensions.web.spec.ts;
 
 ---
 
-> For questions or improvements, contact the QA team or refer to the [Playwright docs](https://playwright.dev/docs/intro).
+> For questions or improvements, contact the Lichtblick team or refer to the [Playwright docs](https://playwright.dev/docs/intro).

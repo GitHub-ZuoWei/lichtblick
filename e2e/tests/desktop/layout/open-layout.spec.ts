@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { test, expect } from "../../../fixtures/electron";
 import { loadFiles } from "../../../fixtures/load-files";
+import { DataSourceDialog, Sidebar } from "../../../page-objects";
 
 const LAYOUT_FILENAME = "imported-layout.json";
 /**
@@ -17,8 +18,8 @@ test("open layout via drag and drop", async ({ mainWindow }) => {
   });
 
   // When
-  await mainWindow.getByTestId("DataSourceDialog").getByTestId("CloseIcon").click();
-  await mainWindow.getByTestId("layouts-left").click();
+  await new DataSourceDialog(mainWindow).close();
+  await new Sidebar(mainWindow).openLayoutsTab();
 
   // Then
   await expect(mainWindow.getByText("imported-layout", { exact: true })).toHaveCount(1);

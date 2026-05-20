@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { test, expect } from "../../../../fixtures/electron";
 import { loadFiles } from "../../../../fixtures/load-files";
+import { Panels, Sidebar } from "../../../../page-objects";
 
 /**
  * GIVEN a .bag file is loaded
@@ -10,6 +11,9 @@ import { loadFiles } from "../../../../fixtures/load-files";
  * THEN the "Map panel" settings should be visible
  */
 test("open map panel after loading a bag file", async ({ mainWindow }) => {
+  const panels = new Panels(mainWindow);
+  const sidebar = new Sidebar(mainWindow);
+
   /// Given
   const filename = "example.bag";
   await loadFiles({
@@ -18,9 +22,8 @@ test("open map panel after loading a bag file", async ({ mainWindow }) => {
   });
 
   // When
-  await mainWindow.getByTestId("AddPanelButton").click();
-  await mainWindow.getByTestId("panel-menu-item Map").click();
-  await mainWindow.getByTestId("panel-settings-left").click();
+  await panels.addPanel("Map");
+  await sidebar.openPanelSettingsTab();
   await mainWindow.getByText("Waiting for first GPS point...").nth(0).click();
 
   // Then
