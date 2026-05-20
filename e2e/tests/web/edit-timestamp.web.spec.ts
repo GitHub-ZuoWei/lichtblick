@@ -4,6 +4,7 @@
 import { test, expect } from "@playwright/test";
 
 import { loadFiles } from "../../fixtures/load-files";
+import { PlayerControls } from "../../page-objects";
 
 const MCAP_FILENAME = "example.mcap";
 
@@ -16,6 +17,8 @@ const MCAP_FILENAME = "example.mcap";
  */
 
 test("is able to manually edit the timestamp display on the player", async ({ page }) => {
+  const player = new PlayerControls(page);
+
   // Given
   const getTimeParam = () => new URL(page.url()).searchParams.get("time");
 
@@ -35,7 +38,7 @@ test("is able to manually edit the timestamp display on the player", async ({ pa
   expect(getTimeParam()).toBe(urlInitialTimestamp);
 
   // When
-  const timestampInput = page.getByTestId("PlaybackTime-text").locator("input");
+  const timestampInput = player.getTimestampInput();
   const newTimestamp = "2025-02-26 10:37:18.499 AM WET";
   await timestampInput.click();
   await timestampInput.fill(newTimestamp);
@@ -60,6 +63,8 @@ test("is able to manually edit the timestamp display on the player", async ({ pa
 test("is able to manually edit the timestamp display (epoch format) on the player", async ({
   page,
 }) => {
+  const player = new PlayerControls(page);
+
   // Given
   const getTimeParam = () => new URL(page.url()).searchParams.get("time");
 
@@ -86,7 +91,7 @@ test("is able to manually edit the timestamp display (epoch format) on the playe
   expect(getTimeParam()).toBe(urlInitialTimestamp);
 
   // When
-  const timestampInput = page.getByTestId("PlaybackTime-text").locator("input");
+  const timestampInput = player.getTimestampInput();
   const newEpochTimestamp = "1740566238.499000000";
   await timestampInput.click();
   await timestampInput.fill(newEpochTimestamp);

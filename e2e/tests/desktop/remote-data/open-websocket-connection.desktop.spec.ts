@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { test, expect } from "../../../fixtures/electron";
 import { launchWebsocket } from "../../../fixtures/launch-websocket";
+import { DataSourceDialog, Panels, Sidebar } from "../../../page-objects";
 
 /**
  * GIVEN there is a WebSocket server is running
@@ -15,21 +16,24 @@ import { launchWebsocket } from "../../../fixtures/launch-websocket";
 test("show correctly open a web socket connection showing correct attibutes on raw messages panel", async ({
   mainWindow,
 }) => {
+  const dialog = new DataSourceDialog(mainWindow);
+  const sidebar = new Sidebar(mainWindow);
+  const panels = new Panels(mainWindow);
+
   // Given
   const websocketServer = launchWebsocket();
 
   // When
-  await mainWindow.getByText("Open connection").click();
+  await dialog.openConnection();
   await mainWindow.getByText("Open", { exact: true }).click();
 
   // Then
   await expect(mainWindow.getByText("ws://localhost:8765").innerHTML()).resolves.toBeDefined();
 
   // When
-  await mainWindow.getByText("Topics", { exact: true }).click();
+  await sidebar.openTopicsTab();
   await expect(mainWindow.getByText("/websocket_test").innerHTML()).resolves.toBeDefined();
-  await mainWindow.getByTestId("AddPanelButton").click();
-  await mainWindow.getByText("Raw Messages", { exact: true }).click();
+  await panels.addPanel("Raw Messages");
   await mainWindow.getByPlaceholder("/some/topic.msgs[0].field").nth(0).click();
   await mainWindow.getByTestId("autocomplete-item").click();
 

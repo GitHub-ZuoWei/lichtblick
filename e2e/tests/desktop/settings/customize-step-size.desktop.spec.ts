@@ -3,6 +3,7 @@
 
 import { test, expect } from "../../../fixtures/electron";
 import { loadFiles } from "../../../fixtures/load-files";
+import { PlayerControls } from "../../../page-objects";
 
 /**
  * GIVEN example.mcap file is loaded
@@ -18,6 +19,8 @@ import { loadFiles } from "../../../fixtures/load-files";
 test("Should update the step size value via settings and verify that change being applied on the player by moving forward and backward", async ({
   mainWindow,
 }) => {
+  const player = new PlayerControls(mainWindow);
+
   // Given
   const initialTime = "2025-02-26 10:37:15.547 AM WET";
   const forwardedTime = "2025-02-26 10:37:15.947 AM WET";
@@ -38,14 +41,14 @@ test("Should update the step size value via settings and verify that change bein
 
   await mainWindow.locator("#stepSizeInput").fill("400");
   await mainWindow.getByText("Done").click();
-  await mainWindow.getByTitle("Seek forward").click();
+  await player.seekForward();
 
   // Then
   const playerForwardedTime = mainWindow.locator(`input[value="${forwardedTime}"]`);
   expect(await playerForwardedTime.inputValue()).toBe(forwardedTime);
 
   // When
-  await mainWindow.getByTitle("Seek backward").click();
+  await player.seekBackward();
 
   // Then
   expect(await playerStartingTime.inputValue()).toBe(initialTime);

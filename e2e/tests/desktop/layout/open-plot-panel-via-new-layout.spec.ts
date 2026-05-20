@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: MPL-2.0
 import { test, expect } from "../../../fixtures/electron";
 import { loadFiles } from "../../../fixtures/load-files";
+import { Sidebar } from "../../../page-objects";
 
 /**
  * GIVEN a file is loaded and a new layout is created
@@ -16,12 +17,14 @@ test("open Plot panel when clicking on Layouts > layout", async ({ mainWindow })
     filenames: filename,
   });
 
-  await mainWindow.getByTestId("layouts-left").click();
+  const sidebar = new Sidebar(mainWindow);
+
+  await sidebar.openLayoutsTab();
   await mainWindow.getByTestId("create-new-layout").click();
 
   // When
   // the user opens a Plot panel and adds a series with "mouse.clientX"
-  await mainWindow.getByTestId("panel-settings-left").click();
+  await sidebar.openPanelSettingsTab();
   await mainWindow.getByText("Plot").nth(0).click();
 
   await mainWindow.getByTestId("add-series").click();
