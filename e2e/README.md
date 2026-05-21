@@ -123,6 +123,93 @@ install-multiple-extensions.web.spec.ts;
   └── global-teardown.ts             # Cleanup after testing (clear DB, stored files, etc.)
 ```
 
+## AI-Assisted Test Authoring with Playwright MCP
+
+The project integrates the [Playwright MCP server](https://github.com/microsoft/playwright-mcp) to enable AI agents (GitHub Copilot, Claude) to assist with E2E test development.
+
+### How It Works
+
+The Playwright MCP server exposes browser automation as MCP tools that AI agents can invoke. Instead of screenshots, the server captures structured **accessibility snapshots** (ARIA roles, names, test IDs) that LLMs reason about deterministically. This produces reliable, maintainable selectors.
+
+### Prerequisites
+
+- VS Code with [GitHub Copilot](https://marketplace.visualstudio.com/items?itemName=GitHub.copilot) extension
+- Copilot agent mode enabled (VS Code 1.99+)
+- The `.vscode/mcp.json` file (already included) configures the Playwright MCP server
+
+### Workflow
+
+1. Start the web app: `yarn web:serve`
+2. Open VS Code agent mode (Copilot Chat) and invoke `@lb-e2e-test`
+3. The MCP server starts automatically and opens a Chromium browser
+4. Ask the agent to navigate to `http://localhost:8080` and explore the UI
+5. The agent captures accessibility snapshots to identify selectors
+6. Ask the agent to generate test scaffolds following the project conventions
+7. Review the generated test, add meaningful assertions, and refine
+
+### Limitations
+
+- The MCP server controls **Chromium** (web version), not Electron directly. Use it for selector discovery and test scaffolding; Electron-specific behavior uses the custom fixture.
+- AI-generated tests require human review for correctness and meaningful assertions.
+- MCP server is a development-time tool only — it does not affect CI/CD.
+
+## Page Object Models (POMs)
+
+Reusable UI abstractions live in `e2e/page-objects/`. They encapsulate common interactions so tests focus on behavior, not selectors.
+
+### Available POMs
+
+| POM | Purpose | Key Methods |
+|-----|---------|-------------|
+| `DataSourceDialog` | Data source dialog interactions | `close()`, `openConnection()`, `isVisible()`, `getLocator()` |
+| `Sidebar` | Left/right sidebar tabs | `openLayoutsTab()`, `openTopicsTab()`, `toggleLeftSidebar()`, `getLeftSidebar()`, `getPanelSettingsTab()` |
+| `PlayerControls` | Playback controls | `play()`, `pause()`, `seekForward()`, `setSpeed()`, `getTimestampValue()`, `getPlayButton()`, `getSlider()` |
+| `LayoutManager` | Layout CRUD | `openDefaultLayout()`, `createNewLayout()`, `selectPanel()`, `revertLayout()`, `getLayoutListItem()` |
+| `ExtensionManager` | Extension workflows | `open()`, `search()`, `findExtension()`, `uninstall()`, `getSearchBar()` |
+| `AppMenu` | App menu navigation | `openFile()`, `openViewMenu()`, `importLayoutFromMenu()`, `getMenuButton()` |
+| `Panels` | Panel operations | `addPanel()`, `addPanelFromSearch()`, `setTopicPath()`, `splitPanelDown()`, `getAddPanelButton()`, `getLogPanelRoot()` |
+
+### Usage Example
+
+```ts
+import { test, expect } from "../../../fixtures/electron";
+import { DataSourceDialog, Sidebar, LayoutManager } from "../../../page-objects";
+
+test("create a new layout", async ({ mainWindow }) => {
+  const dialog = new DataSourceDialog(mainWindow);
+  const sidebar = new Sidebar(mainWindow);
+  const layout = new LayoutManager(mainWindow);
+
+  // Given
+  await dialog.close();
+  await sidebar.openLayoutsTab();
+
+  // When
+  await layout.openDefaultLayout();
+  await layout.createNewLayout();
+  await layout.selectPanel("Diagnostics – Detail (ROS)");
+
+  // Then
+  await expect(mainWindow.getByText("Unnamed layout").nth(0)).toBeVisible();
+});
+```
+
+### When to Use POMs vs Direct Selectors
+
+- **Use POMs** for common, repeated interactions (dismissing dialogs, navigating sidebar, player controls)
+- **Use direct selectors** for one-off, test-specific elements that don't appear across multiple tests
+
+## Selector Priority Strategy
+
+When choosing selectors for new tests, follow this priority order:
+
+1. **`getByTestId()`** — `data-testid` attributes. Most stable and used extensively in this project.
+2. **`getByRole()`** — Accessibility roles with ARIA names. Resilient to implementation changes.
+3. **`getByText()` / `getByPlaceholder()`** — Visible text content. Good for user-facing labels.
+4. **`locator()` with CSS** — Last resort, for elements without accessible roles or test IDs.
+
+Avoid XPath selectors and MUI class names (e.g., `.MuiButton-root`).
+
 ---
 
 > For questions or improvements, contact the Lichtblick team or refer to the [Playwright docs](https://playwright.dev/docs/intro).
