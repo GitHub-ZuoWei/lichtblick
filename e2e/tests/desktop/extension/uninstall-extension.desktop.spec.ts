@@ -33,7 +33,7 @@ test("should uninstall an extension", async ({ mainWindow }) => {
   await expect(uninstallButton).toBeEnabled();
 
   // When
-  await uninstallButton.click();
+  await extensions.uninstall();
   const uninstallingToast = mainWindow.getByText("Uninstalling...");
 
   // Then

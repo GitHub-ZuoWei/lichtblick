@@ -19,8 +19,7 @@ test("Display the open a new connection dialog when clicking File > Open... > Op
   await dialog.close();
 
   // When
-  await appMenu.openFile();
-  await mainWindow.getByText("Open connection").nth(0).click();
+  await appMenu.openConnection();
 
   // Then
   await expect(mainWindow.getByText("Open a new connection", { exact: true })).toBeVisible();

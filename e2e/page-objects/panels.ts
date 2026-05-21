@@ -11,12 +11,6 @@ export class Panels {
     await this.page.getByTestId(`panel-menu-item ${panelName}`).click();
   }
 
-  public async addPanelFromSearch(panelName: string): Promise<void> {
-    await this.page.getByTestId("AddPanelButton").click();
-    await this.page.getByTestId("panel-list-textfield").locator("input").fill(panelName);
-    await this.page.getByTestId(`panel-menu-item ${panelName}`).click();
-  }
-
   public async setTopicPath(path: string): Promise<void> {
     await this.page.getByPlaceholder("/some/topic.msgs[0].field").fill(path);
   }

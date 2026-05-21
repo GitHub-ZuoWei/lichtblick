@@ -1,17 +1,17 @@
 // SPDX-FileCopyrightText: Copyright (C) 2023-2026 Bayerische Motoren Werke Aktiengesellschaft (BMW AG)<lichtblick@bmwgroup.com>
 // SPDX-License-Identifier: MPL-2.0
 
-import { expect, Locator, Page } from "@playwright/test";
+import { Locator, Page } from "playwright";
 
 export class PlayerControls {
   public constructor(private readonly page: Page) {}
 
   public async play(): Promise<void> {
-    await this.getPlayButton().click();
+    await this.page.getByTestId("play-button").and(this.page.getByTitle("Play")).click();
   }
 
   public async pause(): Promise<void> {
-    await this.getPlayButton().click();
+    await this.page.getByTestId("play-button").and(this.page.getByTitle("Pause")).click();
   }
 
   public async togglePlayback(): Promise<void> {
@@ -28,7 +28,9 @@ export class PlayerControls {
 
   public async setSpeed(speed: string): Promise<void> {
     await this.page.getByTestId("PlaybackSpeedControls-Dropdown").click();
-    await this.page.getByRole("menuitem", { name: speed, exact: true }).click();
+    const menuItem = this.page.getByRole("menuitem", { name: speed, exact: true });
+    await menuItem.click();
+    await menuItem.waitFor({ state: "hidden" });
   }
 
   public async switchToEpochFormat(initialTimestamp: string): Promise<void> {
@@ -38,7 +40,7 @@ export class PlayerControls {
     await timestampDropdown.click();
     const newTimestampOption = this.page.getByTestId("playback-time-display-option-SEC");
     await newTimestampOption.click();
-    await expect(newTimestampOption).toHaveCount(0);
+    await newTimestampOption.waitFor({ state: "hidden" });
   }
 
   public async getTimestampValue(): Promise<number> {

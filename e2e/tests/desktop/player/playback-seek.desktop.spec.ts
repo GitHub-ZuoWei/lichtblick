@@ -10,7 +10,7 @@ import { PlayerControls } from "../../../page-objects";
 
 const MCAP_FILENAME = "example.mcap";
 
-async function clickPlayblackSlider(
+async function clickPlaybackSlider(
   player: PlayerControls,
   mainWindow: Page,
   fraction: number,
@@ -156,7 +156,7 @@ test("should regress timestamp 100ms when seek forward backward is clicked", asy
   await changeToEpochFormat(mainWindow);
 
   // When
-  await clickPlayblackSlider(player, mainWindow, 0.5); // move slider to middle
+  await clickPlaybackSlider(player, mainWindow, 0.5); // move slider to middle
 
   const startTime = await player.getTimestampValue();
 
@@ -185,7 +185,7 @@ test("should regress timestamp 100ms when left arrow key is pressed", async ({ m
   await changeToEpochFormat(mainWindow);
 
   // When
-  await clickPlayblackSlider(player, mainWindow, 0.5); // move slider to middle
+  await clickPlaybackSlider(player, mainWindow, 0.5); // move slider to middle
 
   const startTime = await player.getTimestampValue();
 
@@ -216,7 +216,7 @@ test("should regress timestamp 500ms when alt + left arrow key is pressed", asyn
   await changeToEpochFormat(mainWindow);
 
   // When
-  await clickPlayblackSlider(player, mainWindow, 0.5); // move slider to middle
+  await clickPlaybackSlider(player, mainWindow, 0.5); // move slider to middle
 
   const startTime = await player.getTimestampValue();
 
@@ -248,10 +248,10 @@ test("should foward timestamp to end of slider when alt + right arrow key is pre
   await changeToEpochFormat(mainWindow);
 
   // When
-  await clickPlayblackSlider(player, mainWindow, 1); // move slider to end
+  await clickPlaybackSlider(player, mainWindow, 1); // move slider to end
   const startTime = await player.getTimestampValue();
 
-  await clickPlayblackSlider(player, mainWindow, 0.9); // move slider close to end
+  await clickPlaybackSlider(player, mainWindow, 0.9); // move slider close to end
 
   await mainWindow.keyboard.down("Alt");
   await mainWindow.keyboard.press("ArrowRight");
@@ -281,10 +281,10 @@ test("should regress timestamp to start of slider alt + left arrow key is presse
   await changeToEpochFormat(mainWindow);
 
   // When
-  await clickPlayblackSlider(player, mainWindow, 0); // move slider to start
+  await clickPlaybackSlider(player, mainWindow, 0); // move slider to start
   const startTime = await player.getTimestampValue();
 
-  await clickPlayblackSlider(player, mainWindow, 0.1); // move slider close to start
+  await clickPlaybackSlider(player, mainWindow, 0.1); // move slider close to start
 
   await mainWindow.keyboard.down("Alt");
   await mainWindow.keyboard.press("ArrowLeft");

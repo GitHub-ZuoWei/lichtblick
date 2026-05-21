@@ -38,6 +38,10 @@ export class Sidebar {
     return this.page.getByTestId("sidebar-left");
   }
 
+  public getRightSidebar(): Locator {
+    return this.page.getByTestId("sidebar-right");
+  }
+
   public getLayoutsTab(): Locator {
     return this.page.getByTestId("layouts-left");
   }
