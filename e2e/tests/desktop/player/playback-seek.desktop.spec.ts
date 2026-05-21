@@ -10,11 +10,7 @@ import { PlayerControls } from "../../../page-objects";
 
 const MCAP_FILENAME = "example.mcap";
 
-async function clickPlaybackSlider(
-  player: PlayerControls,
-  mainWindow: Page,
-  fraction: number,
-) {
+async function clickPlaybackSlider(player: PlayerControls, mainWindow: Page, fraction: number) {
   const box = await player.getSlider().boundingBox();
   if (!box) {
     throw new Error("Slider bounding box not found");
