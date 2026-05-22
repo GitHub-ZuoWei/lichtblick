@@ -13,6 +13,7 @@ export type ExtensionMarketplaceDetail = ExtensionInfo & {
   sha256sum?: string;
   foxe?: string;
   time?: Record<string, string>;
+  inUse?: boolean;
 };
 
 export interface ExtensionMarketplace {

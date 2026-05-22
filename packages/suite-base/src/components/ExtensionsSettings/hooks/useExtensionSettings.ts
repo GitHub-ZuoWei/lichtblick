@@ -51,7 +51,7 @@ const useExtensionSettings = (): UseExtensionSettingsHook => {
     return (installed ?? []).map((entry) => {
       const marketplaceEntry = marketplaceMap[entry.id];
       if (marketplaceEntry != undefined) {
-        return { ...marketplaceEntry, namespace: entry.namespace };
+        return { ...marketplaceEntry, namespace: entry.namespace, inUse: extensionsInUse.has(entry.id) };
       }
 
       return {

@@ -99,7 +99,27 @@ export default function ExtensionList({
   ]);
 
   const columns: GridColDef[] = [
-    { field: "name", headerName: "Name", flex: 1, sortable: true },
+    {
+      field: "name",
+      headerName: "Name",
+      flex: 1,
+      sortable: true,
+      renderCell: (params: GridRenderCellParams) => {
+        const extension = params.row as ExtensionMarketplaceDetail;
+        return (
+          <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", overflow: "hidden", width: "100%", height: "100%" }}>
+            <Typography variant="body2" noWrap title={params.value as string}>
+              {params.value as string}
+            </Typography>
+            {extension.inUse === true && (
+              <Typography variant="caption" color="success.main" style={{ fontSize: "0.65rem", lineHeight: 1.2 }}>
+                In use
+              </Typography>
+            )}
+          </div>
+        );
+      },
+    },
     { field: "version", headerName: "Version", flex: 0.5, sortable: true },
     { field: "publisher", headerName: "Publisher", flex: 0.5, sortable: true },
     { field: "description", headerName: "Description", flex: 2 },
@@ -154,17 +174,16 @@ export default function ExtensionList({
 
     return (
       <Stack gap={1}>
-        <Stack direction="row" gap={1} paddingX={2}>
-          <Typography
-            variant="body2"
-            color="text.secondary"
-            alignSelf="center"
-            paddingY={1}
-            style={{ visibility: selectedInstalled.length > 0 ? "visible" : "hidden" }}
-          >
-            {selectedExtensionIds.length} selected
-          </Typography>
-          {selectedInstalled.length > 0 && (
+        {selectedInstalled.length > 0 && (
+          <Stack direction="row" gap={1} paddingX={2}>
+            <Typography
+              variant="body2"
+              color="text.secondary"
+              alignSelf="center"
+              paddingY={1}
+            >
+              {selectedExtensionIds.length} selected
+            </Typography>
             <Button
               size="small"
               color="inherit"
@@ -176,8 +195,8 @@ export default function ExtensionList({
                 ? ExtensionOperationStatusLabel.UNINSTALLING
                 : `${ExtensionActionsLabel.UNINSTALL} ${selectedInstalled.length}`}
             </Button>
-          )}
-        </Stack>
+          </Stack>
+        )}
         <div>
           <DataGrid
             rows={entries}
@@ -220,7 +239,7 @@ export default function ExtensionList({
   };
 
   return (
-    <Stack key={namespace} gap={1} paddingBottom={2}>
+    <Stack key={namespace} gap={2} paddingBottom={2}>
       <Stack paddingY={0} paddingX={2}>
         <Typography component="div" variant="overline" color="text.secondary">
           {displayNameForNamespace(namespace)}
