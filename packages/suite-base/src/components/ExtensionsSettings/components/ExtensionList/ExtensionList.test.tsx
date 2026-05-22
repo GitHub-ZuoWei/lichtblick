@@ -436,4 +436,127 @@ describe("ExtensionList Component", () => {
       expect(screen.getByRole("button", { name: "Uninstall" })).toBeInTheDocument();
     });
   });
+
+  describe("inUse indicator", () => {
+    it("does not show 'In use' text for an extension with inUse false", () => {
+      // Given
+      const inactiveEntry = ExtensionBuilder.extensionMarketplaceDetail({
+        name: BasicBuilder.string(),
+        id: BasicBuilder.string(),
+        namespace: mockNamespace,
+        inUse: false,
+      });
+
+      // When
+      render(
+        <ExtensionList
+          namespace={mockNamespace}
+          entries={[inactiveEntry]}
+          filterText=""
+          selectExtension={jest.fn()}
+        />,
+      );
+
+      // Then
+      expect(screen.queryByText("In use")).not.toBeInTheDocument();
+    });
+
+    it("does not show 'In use' text for an extension without the inUse field", () => {
+      // Given
+      const entry = ExtensionBuilder.extensionMarketplaceDetail({
+        name: BasicBuilder.string(),
+        id: BasicBuilder.string(),
+        namespace: mockNamespace,
+      });
+
+      // When
+      render(
+        <ExtensionList
+          namespace={mockNamespace}
+          entries={[entry]}
+          filterText=""
+          selectExtension={jest.fn()}
+        />,
+      );
+
+      // Then
+      expect(screen.queryByText("In use")).not.toBeInTheDocument();
+    });
+
+    it("only shows 'In use' for extensions that are in use when rendering multiple entries", () => {
+      // Given
+      const activeEntry = ExtensionBuilder.extensionMarketplaceDetail({
+        name: BasicBuilder.string(),
+        id: BasicBuilder.string(),
+        namespace: mockNamespace,
+        inUse: true,
+      });
+      const inactiveEntry = ExtensionBuilder.extensionMarketplaceDetail({
+        name: BasicBuilder.string(),
+        id: BasicBuilder.string(),
+        namespace: mockNamespace,
+        inUse: false,
+      });
+
+      // When
+      render(
+        <ExtensionList
+          namespace={mockNamespace}
+          entries={[activeEntry, inactiveEntry]}
+          filterText=""
+          selectExtension={jest.fn()}
+        />,
+      );
+
+      // Then — exactly one "In use" label
+      expect(screen.getAllByText("In use")).toHaveLength(1);
+    });
+  });
+
+  describe("selection row", () => {
+    it("does not show the selection row when no extensions are selected", () => {
+      // When
+      render(
+        <ExtensionList
+          namespace={mockNamespace}
+          entries={mockEntries}
+          filterText=""
+          selectExtension={jest.fn()}
+        />,
+      );
+
+      // Then
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+    });
+
+    it("shows the selection row only after selecting an installed extension", async () => {
+      // Given
+      (useExtensionCatalog as jest.Mock).mockImplementation((selector) => {
+        const mockState = {
+          installedExtensions: mockEntries,
+          uninstallExtension: jest.fn(),
+        };
+        return selector(mockState);
+      });
+
+      render(
+        <ExtensionList
+          namespace={mockNamespace}
+          entries={mockEntries}
+          filterText=""
+          selectExtension={jest.fn()}
+        />,
+      );
+
+      // Before selection — row absent
+      expect(screen.queryByText(/selected/)).not.toBeInTheDocument();
+
+      // When
+      const checkboxes = screen.getAllByRole("checkbox", { name: /select row/i });
+      fireEvent.click(checkboxes[0]!);
+
+      // Then — row appears
+      expect(await screen.findByText("1 selected")).toBeInTheDocument();
+    });
+  });
 });

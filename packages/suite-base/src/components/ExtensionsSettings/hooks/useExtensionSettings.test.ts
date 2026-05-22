@@ -8,11 +8,13 @@ import { act, renderHook } from "@testing-library/react";
 import { InstalledExtension } from "@lichtblick/suite-base/components/ExtensionsSettings/types";
 import { useExtensionCatalog } from "@lichtblick/suite-base/context/ExtensionCatalogContext";
 import { useExtensionMarketplace } from "@lichtblick/suite-base/context/ExtensionMarketplaceContext";
+import { useExtensionUsage } from "@lichtblick/suite-base/hooks/useExtensionUsage";
 
 import useExtensionSettings from "./useExtensionSettings";
 
 jest.mock("@lichtblick/suite-base/context/ExtensionCatalogContext");
 jest.mock("@lichtblick/suite-base/context/ExtensionMarketplaceContext");
+jest.mock("@lichtblick/suite-base/hooks/useExtensionUsage");
 
 describe("useExtensionSettings", () => {
   const mockInstalledExtensions: InstalledExtension[] = [
@@ -88,6 +90,8 @@ describe("useExtensionSettings", () => {
     (useExtensionMarketplace as jest.Mock).mockReturnValue({
       getAvailableExtensions: jest.fn().mockResolvedValue(mockAvailableExtensions),
     });
+
+    (useExtensionUsage as jest.Mock).mockReturnValue(new Set<string>());
   });
 
   it("should initialize correctly", async () => {
@@ -136,5 +140,62 @@ describe("useExtensionSettings", () => {
         ]),
       },
     ]);
+  });
+
+  it("should set inUse to false for installed extensions not in use", async () => {
+    // Given
+    (useExtensionUsage as jest.Mock).mockReturnValue(new Set<string>());
+
+    // When
+    const { result } = await setupHook();
+
+    // Then
+    const entries = result.current.namespacedData.flatMap(({ entries: e }) => e);
+    expect(entries.every((e) => e.inUse === false)).toBe(true);
+  });
+
+  it("should set inUse to true for installed extensions that are in use", async () => {
+    // Given
+    (useExtensionUsage as jest.Mock).mockReturnValue(new Set(["1"]));
+
+    // When
+    const { result } = await setupHook();
+
+    // Then
+    const entries = result.current.namespacedData.flatMap(({ entries: e }) => e);
+    const inUseEntry = entries.find((e) => e.id === "1");
+    const notInUseEntry = entries.find((e) => e.id === "4");
+    expect(inUseEntry?.inUse).toBe(true);
+    expect(notInUseEntry?.inUse).toBe(false);
+  });
+
+  it("should set inUse correctly for marketplace-matched installed extensions", async () => {
+    // Given — installed extension whose ID matches a marketplace entry
+    const installedWithMarketplaceMatch: InstalledExtension[] = [
+      {
+        id: "5",
+        displayName: "Extension 2",
+        description: "Description 2",
+        publisher: "Publisher 2",
+        homepage: "http://example.com",
+        license: "MIT",
+        version: "1.0.0",
+        keywords: ["keyword2"],
+        namespace: "namespace2",
+        installed: true,
+        name: "Extension 2",
+        qualifiedName: "Extension 2",
+      },
+    ];
+    (useExtensionCatalog as jest.Mock).mockReturnValue(installedWithMarketplaceMatch);
+    (useExtensionUsage as jest.Mock).mockReturnValue(new Set(["5"]));
+
+    // When
+    const { result } = await setupHook();
+
+    // Then
+    const entries = result.current.namespacedData.flatMap(({ entries: e }) => e);
+    const matched = entries.find((e) => e.id === "5");
+    expect(matched?.inUse).toBe(true);
   });
 });
