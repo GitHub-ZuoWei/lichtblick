@@ -5,13 +5,16 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { useMemo } from "react";
+import { useCallback, useMemo } from "react";
 import { getLeaves, MosaicNode } from "react-mosaic-component";
 
+import { MessageEvent } from "@lichtblick/suite";
+import { useMessageReducer } from "@lichtblick/suite-base/PanelAPI/useMessageReducer";
 import { useMessagePipeline } from "@lichtblick/suite-base/components/MessagePipeline";
 import { useCurrentLayoutActions } from "@lichtblick/suite-base/context/CurrentLayoutContext";
 import { useExtensionCatalog } from "@lichtblick/suite-base/context/ExtensionCatalogContext";
 import { TabPanelConfig } from "@lichtblick/suite-base/types/layouts";
+import { CAMERA_INFO_SCHEMA_NAMES } from "@lichtblick/suite-base/util/cameraInfoSchemas";
 import { TAB_PANEL_TYPE } from "@lichtblick/suite-base/util/constants";
 import { getPanelTypeFromId } from "@lichtblick/suite-base/util/layout";
 
@@ -131,22 +134,63 @@ export function useMessageConverterExtensionsInUse(): Set<string> {
 }
 
 /**
- * Hook to detect which camera state extensions are currently in use
+ * Hook to detect which camera model extensions are currently in use.
+ * Subscribes to all camera info topics and tracks which distortion_model values
+ * appear in messages, then matches them against installed camera model extensions.
  * @returns Set of camera model extension identifiers that are currently active
- * WIP
  */
 export function useCameraModelsExtensionsInUse(): Set<string> {
   const cameraModels = useExtensionCatalog((state) => state.installedCameraModels);
+  const topics = useMessagePipeline((ctx) => ctx.sortedTopics);
+
+  const cameraInfoTopics = useMemo(
+    () =>
+      topics
+        .filter(
+          (topic) =>
+            topic.schemaName != undefined && CAMERA_INFO_SCHEMA_NAMES.has(topic.schemaName),
+        )
+        .map((topic) => topic.name),
+    [topics],
+  );
+
+  const restore = useCallback(() => new Set<string>(), []);
+  const addMessages = useCallback(
+    (state: Set<string>, messages: readonly MessageEvent[]) => {
+      const newModels: string[] = [];
+      for (const msg of messages) {
+        const distortionModel = (msg.message as { distortion_model?: string }).distortion_model;
+        if (
+          distortionModel != undefined &&
+          distortionModel.length > 0 &&
+          !state.has(distortionModel)
+        ) {
+          newModels.push(distortionModel);
+        }
+      }
+      if (newModels.length === 0) {
+        return state;
+      }
+      return new Set([...state, ...newModels]);
+    },
+    [],
+  );
+
+  const seenDistortionModels = useMessageReducer<Set<string>>({
+    topics: cameraInfoTopics,
+    restore,
+    addMessages,
+  });
 
   return useMemo(() => {
     const extensionsInUse = new Set<string>();
-
-    if (cameraModels.size === 0) {
-      return extensionsInUse;
+    for (const [distortionModel, { extensionId }] of cameraModels) {
+      if (seenDistortionModels.has(distortionModel)) {
+        extensionsInUse.add(extensionId);
+      }
     }
-
     return extensionsInUse;
-  }, [cameraModels]);
+  }, [cameraModels, seenDistortionModels]);
 }
 
 // Due to how useTopicAliasFunctionsInUse is currently implemented there's no way to detect which topic alias function extensions are in use,

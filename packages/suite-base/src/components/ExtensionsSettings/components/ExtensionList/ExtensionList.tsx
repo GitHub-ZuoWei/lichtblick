@@ -112,7 +112,7 @@ export default function ExtensionList({
               {params.value as string}
             </Typography>
             {extension.inUse === true && (
-              <Typography variant="caption" color="success.main" style={{ fontSize: "0.65rem", lineHeight: 1.2 }}>
+              <Typography variant="caption" color="primary.main" style={{ fontSize: "0.65rem", lineHeight: 1.2 }}>
                 In use
               </Typography>
             )}

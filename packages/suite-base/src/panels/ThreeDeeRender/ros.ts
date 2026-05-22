@@ -330,8 +330,7 @@ addRosDataType(POSE_ARRAY_DATATYPES, "geometry_msgs/PoseArray");
 export const NAV_PATH_DATATYPES = new Set<string>();
 addRosDataType(NAV_PATH_DATATYPES, "nav_msgs/Path");
 
-export const CAMERA_INFO_DATATYPES = new Set<string>();
-addRosDataType(CAMERA_INFO_DATATYPES, "sensor_msgs/CameraInfo");
+export { CAMERA_INFO_DATATYPES } from "@lichtblick/suite-base/util/cameraInfoSchemas";
 
 export const IMAGE_DATATYPES = new Set<string>();
 addRosDataType(IMAGE_DATATYPES, "sensor_msgs/Image");
