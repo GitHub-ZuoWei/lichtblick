@@ -658,6 +658,9 @@ flowchart TB
         P4["Aggressive point cloud LOD<br/>(reduce points under memory pressure)"]
         P5["Shared ArrayBuffer<br/>(avoid transfers between threads)"]
         P6["Offscreen Canvas<br/>(move rendering to Worker)"]
+        P7["WASM point cloud processing<br/>(⚠️ low boundary cost — see 5.5)"]
+        P8["WASM image decoding<br/>(⚠️ low boundary cost — see 5.5)"]
+        P9["WASM deserialization<br/>(⚠️ high boundary cost — see 5.5)"]
     end
 
     subgraph Monitor["📊 Monitoring APIs"]
@@ -696,6 +699,265 @@ pie title Memory Distribution in OOM Scenario
 4. **The browser kills the tab without warning** — there's no possible `try/catch` for OOM
 5. **Multiple 3D panels** multiply GPU memory consumption which also pressures the process
 6. **Electron (desktop)** doesn't suffer from this limit because it can be configured with a larger `--max-old-space-size`
+
+### 5.5 WebAssembly — Performance Acceleration
+
+WebAssembly (WASM) enables near-native execution speed for CPU-bound tasks inside the browser. Lichtblick already uses WASM for chunk decompression, and has **three additional WASM modules built but not yet integrated** into the main pipeline.
+
+#### 5.5.1 Current WASM Usage in the Pipeline
+
+```mermaid
+flowchart LR
+    subgraph Integrated["✅ Already Using WASM"]
+        direction TB
+        ZSTD["@lichtblick/wasm-zstd<br/>(chunk decompression)"]
+        LZ4["@lichtblick/wasm-lz4<br/>(chunk decompression)"]
+        BZ2["@lichtblick/wasm-bz2<br/>(chunk decompression)"]
+        SQL["@foxglove/sql.js<br/>(SQLite for ROS2 .db3)"]
+    end
+
+    subgraph Available["🔧 Built, Not Integrated"]
+        direction TB
+        WPC["wasm-pointcloud<br/>(point cloud buffer processing)"]
+        WDS["wasm-deserializers<br/>(Protobuf deserialization)"]
+        WIM["wasm-image<br/>(Bayer, BGR, mono16, UYVY decode)"]
+    end
+
+    subgraph WhyWorks["Why Decompression Works Well"]
+        direction TB
+        W1["Input: Uint8Array"]
+        W2["Output: Uint8Array"]
+        W3["1 call per chunk"]
+        W4["No JS object creation"]
+    end
+
+    Integrated --> WhyWorks
+
+    style Integrated fill:#e8f5e9
+    style Available fill:#fff9c4
+    style WhyWorks fill:#e3f2fd
+```
+
+Decompression is an **ideal WASM use case**: binary in, binary out, no JS object conversion needed. The three unintegrated modules have varying suitability depending on their boundary crossing profile.
+
+#### 5.5.2 The JS↔WASM Boundary Cost — When WASM Hurts
+
+> **Critical tradeoff:** In scenarios with high-frequency conversion between JS and WASM, the boundary crossing overhead can **degrade performance worse than pure JS**.
+
+Every WASM function call crosses an ABI boundary:
+
+```mermaid
+flowchart LR
+    subgraph JS["JavaScript"]
+        JSObj["JS Object / TypedArray"]
+    end
+
+    subgraph Boundary["⚠️ ABI Boundary (~0.5-2μs per call)"]
+        Serialize["Serialize / Copy<br/>into WASM linear memory"]
+        Deserialize["Reconstruct JS objects<br/>from WASM memory"]
+    end
+
+    subgraph WASM["WASM Linear Memory"]
+        Process["Native-speed processing<br/>(SIMD, no GC)"]
+    end
+
+    JSObj -->|"cost varies by<br/>data type"| Serialize
+    Serialize --> Process
+    Process --> Deserialize
+    Deserialize -->|"JS allocations<br/>+ GC pressure"| JSObj
+
+    style JS fill:#fff9c4
+    style Boundary fill:#ffcdd2
+    style WASM fill:#e8f5e9
+```
+
+**Concrete impact at scale:**
+
+```
+50,000 messages/sec × 1μs boundary overhead per call
+= 50ms/sec of pure overhead
+= ~3 frames lost at 60fps — JUST from boundary crossing
+```
+
+**When WASM helps:**
+
+| Condition                       | Why                                            | Example                                                   |
+| ------------------------------- | ---------------------------------------------- | --------------------------------------------------------- |
+| Large contiguous binary buffers | Amortized boundary cost per byte is negligible | Point cloud: 100k points × 32 bytes = 3.2MB per call      |
+| Output is a TypedArray          | Zero-copy via shared WASM memory view          | `Float32Array` position buffer, `Uint8Array` color buffer |
+| Few calls with big payloads     | Low total boundary overhead                    | 1 call/frame for point cloud, 1 call/image                |
+| Tight numeric loops             | SIMD + predictable memory access               | Field reading, color conversion                           |
+
+**When WASM hurts:**
+
+| Condition                           | Why                                                          | Example                                                    |
+| ----------------------------------- | ------------------------------------------------------------ | ---------------------------------------------------------- |
+| Many small calls                    | Boundary cost dominates processing time                      | 50k deserialize() calls/sec for small messages             |
+| Output must be JS object graph      | Must reconstruct objects in JS heap — GC pressure returns    | Deserialized Protobuf → `{sec: number, nsec: number, ...}` |
+| Simple processing per call          | JS JIT is already fast enough, WASM overhead is net negative | `JSON.parse()` for small payloads                          |
+| High call frequency + small payload | Per-call overhead × frequency > processing savings           | Simple ROS1 `string` messages at 100Hz                     |
+
+#### 5.5.3 Top 3 WASM Integration Points — Ranked by Net Impact
+
+```mermaid
+flowchart TB
+    subgraph Rank1["🥇 #1 Point Cloud Processing"]
+        direction TB
+        R1Current["Current: JS loops in PointClouds.ts<br/>DataView.getFloat32() × 100k+ points/frame<br/>+ color conversion per point"]
+        R1WASM["WASM: process_point_cloud_universal()<br/>Single call, Uint8Array → Float32Array<br/>SIMD vectorized field reading"]
+        R1Gain["⚡ Net speedup: 5-10x<br/>Boundary risk: LOW<br/>(1 call/frame, typed arrays in+out)"]
+    end
+
+    subgraph Rank2["🥈 #2 Image Decoding"]
+        direction TB
+        R2Current["Current: JS pixel-by-pixel in Worker<br/>decodeRawImage() for Bayer, BGR, mono16<br/>CPU-bound format conversion"]
+        R2WASM["WASM: decode_bayer_*(), decode_bgr8()<br/>Single call per image, Uint8Array → Uint8Array<br/>SIMD pixel operations"]
+        R2Gain["⚡ Net speedup: 3-8x<br/>Boundary risk: LOW<br/>(1 call/image, binary buffers)"]
+    end
+
+    subgraph Rank3["🥉 #3 Protobuf Deserialization"]
+        direction TB
+        R3Current["Current: JS protobufjs in parseChannel()<br/>reader.readMessage(data) per message<br/>50k calls/sec"]
+        R3WASM["WASM: deserialize_protobuf()<br/>Binary → must still create JS objects<br/>High boundary crossing frequency"]
+        R3Gain["⚠️ Net speedup: 1.5-2x (small msgs)<br/>up to 3-5x (large complex schemas)<br/>Boundary risk: HIGH"]
+    end
+
+    R1Current --> R1WASM --> R1Gain
+    R2Current --> R2WASM --> R2Gain
+    R3Current --> R3WASM --> R3Gain
+
+    style Rank1 fill:#c8e6c9
+    style Rank2 fill:#bbdefb
+    style Rank3 fill:#fff9c4
+```
+
+##### #1 Point Cloud Processing (`wasm-pointcloud`)
+
+**Where it fits in the pipeline:**
+
+```
+PointCloud2 message (Uint8Array)
+  → [WASM] process_point_cloud_universal()
+  → positions: Float32Array(N×3)  ← zero-copy view on WASM memory
+  → colors: Uint8Array(N×4)       ← zero-copy view on WASM memory
+  → GPU upload (gl.bufferData)
+```
+
+| Aspect            | Current (JS)                                   | With WASM                                         |
+| ----------------- | ---------------------------------------------- | ------------------------------------------------- |
+| Processing        | `DataView.getFloat32()` per-point per-field    | SIMD-vectorized batch read                        |
+| Color conversion  | JS `getColorConverter()` per-point             | Lookup table in WASM linear memory                |
+| GC pressure       | Temp objects per-point (`tempColor`, closures) | Zero — all in linear memory                       |
+| Calls per frame   | N/A (inline loops)                             | 1 call to `process_point_cloud_universal()`       |
+| Output            | Writes to `Float32Array` attribute buffers     | Returns `Float32Array` / `Uint8Array` — same type |
+| **Boundary cost** | N/A                                            | **~2μs total** (1 call, large buffer)             |
+
+**This is the highest-impact integration** because:
+
+- It runs on the **main thread** every frame at 60fps
+- The inner loop is the tightest hot path in the entire application
+- Input and output are both typed arrays — **ideal WASM boundary profile**
+- The `wasm-pointcloud` module already has `process_point_cloud_universal()` that handles all color modes + stixels in a single call
+
+##### #2 Image Decoding (`wasm-image`)
+
+**Where it fits in the pipeline:**
+
+```
+RawImage / CompressedImage (Uint8Array)
+  → [Worker] WorkerImageDecoder.worker.ts
+    → [WASM] decode_bayer_bggr8() / decode_bgr8() / decode_mono16() / ...
+    → ImageData (Uint8ClampedArray)
+  → [Comlink.transfer] back to main thread
+  → GPU texture upload
+```
+
+| Aspect            | Current (JS)                        | With WASM                             |
+| ----------------- | ----------------------------------- | ------------------------------------- |
+| Bayer demosaicing | Pixel-by-pixel interpolation in JS  | SIMD bilinear interpolation           |
+| BGR→RGBA          | Loop with per-pixel channel swap    | Batch 4-byte operations               |
+| mono16 scaling    | JS `DataView.getUint16()` per pixel | Direct memory access + SIMD           |
+| **Boundary cost** | N/A                                 | **~1μs** (1 call, large image buffer) |
+
+**Good boundary profile** because: already runs in a Worker, 1 call per image, large binary buffers in and out. The `wasm-image` module supports all ROS image encodings (Bayer BGGR8/GBRG8/GRBG8/RGGB8, BGR8, BGRA8, RGB8, RGBA8, mono8, mono16, float1c, UYVY, YUYV).
+
+##### #3 Protobuf/CDR Deserialization (`wasm-deserializers`)
+
+**Where it fits in the pipeline:**
+
+```
+Uint8Array (serialized protobuf)
+  → [WASM] deserialize_protobuf(schema, type, data)
+  → ⚠️ JS object graph (allocations + GC pressure)
+  → MessageEvent<unknown>
+  → React panels consume as JS objects
+```
+
+| Aspect             | Current (JS `protobufjs`)             | With WASM                           |
+| ------------------ | ------------------------------------- | ----------------------------------- |
+| Binary parsing     | JS-based field-by-field decode        | Native-speed binary parsing         |
+| Object creation    | Direct JS object construction         | Must cross boundary → JS allocation |
+| Schema compilation | JS `protobufjs.Root.fromDescriptor()` | Rust prost schema compilation       |
+| Calls per second   | 50,000+                               | 50,000+ (**each crosses boundary**) |
+| **Boundary cost**  | N/A                                   | **~50ms/sec** at 50k msgs/sec × 1μs |
+
+> **⚠️ Caution:** For small/simple messages (e.g., `std_msgs/String`, `geometry_msgs/Pose`), the JS→WASM→JS boundary overhead can **negate or exceed** the raw processing speedup. The net gain is primarily for **large, deeply nested schemas** like `sensor_msgs/PointCloud2` or complex Protobuf messages with many fields.
+
+**Recommendation:** Use WASM deserialization selectively — apply it for schemas above a complexity/size threshold, keep JS `protobufjs` for simple messages.
+
+#### 5.5.4 Decision Matrix — When to Apply WASM
+
+| Criterion             | Use WASM                                       | Keep JS                                |
+| --------------------- | ---------------------------------------------- | -------------------------------------- |
+| Message size          | > 10KB per message                             | < 1KB per message                      |
+| Call frequency        | < 1000 calls/sec (or 1 call/frame)             | > 10,000 calls/sec                     |
+| Output type           | TypedArray (`Float32Array`, `Uint8Array`)      | JS object graph                        |
+| Processing complexity | Tight numeric loop, SIMD-friendly              | Simple field access, string operations |
+| Data characteristics  | Contiguous binary buffer                       | Sparse/structured data                 |
+| Already in Worker?    | Yes — WASM in Worker avoids main thread impact | No — WASM on main thread still blocks  |
+
+#### 5.5.5 WASM Tradeoffs and Risks
+
+| Tradeoff                 | Description                                                                                                                  |
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------- |
+| **Initialization cost**  | WASM modules must be fetched, compiled, and instantiated (~50-200ms). Must be done once and cached.                          |
+| **Debugging complexity** | WASM stack traces are opaque. Source maps for Rust→WASM exist but are less mature than JS debugging.                         |
+| **WASM linear memory**   | WASM memory (`WebAssembly.Memory`) counts toward the renderer process memory limit — it does **not** bypass the 4GB ceiling. |
+| **Bundle size**          | Each `.wasm` binary adds to the application bundle (~50-500KB per module, compressed).                                       |
+| **Maintenance burden**   | Requires Rust toolchain (`wasm-pack`, `wasm-bindgen`) in addition to the JS/TS build pipeline.                               |
+| **JS↔WASM boundary**    | The overhead per call is small (~1μs), but at high call frequencies it accumulates significantly.                            |
+
+#### 5.5.6 Future Path — WASM + Worker Combined Pipeline
+
+```mermaid
+flowchart LR
+    subgraph Current["Current Pipeline"]
+        direction TB
+        C1["Worker: WASM decompresses chunk"] -->|"Uint8Array"| C2["Worker: JS extracts messages"]
+        C2 -->|"Comlink.transfer"| C3["Main: JS deserializes"]
+        C3 -->|"JS objects"| C4["Main: JS processes point cloud"]
+        C4 -->|"Float32Array"| C5["GPU upload"]
+    end
+
+    subgraph Future["Optimized Pipeline"]
+        direction TB
+        F1["Worker: WASM decompresses +<br/>extracts messages in one call"] -->|"Uint8Array"| F2["Worker: WASM deserializes<br/>(stays in WASM memory)"]
+        F2 -->|"Comlink.transfer"| F3["Main: WASM processes point cloud<br/>(binary → Float32Array directly)"]
+        F3 -->|"Float32Array"| F4["GPU upload"]
+    end
+
+    style Current fill:#fff3e0
+    style Future fill:#e8f5e9
+```
+
+The key insight is to **keep data in WASM memory as long as possible**, minimizing the number of JS↔WASM boundary crossings. In the future pipeline:
+
+- Decompression + message extraction happen in a single WASM call (avoids 1 boundary)
+- Deserialized data stays as binary in WASM memory (avoids creating JS objects)
+- Point cloud processing reads directly from WASM memory (avoids another boundary)
+- Only the final `Float32Array` crosses back to JS for GPU upload
+
+This reduces boundary crossings from **4 per message** to **1 per frame**.
 
 ---
 
@@ -1110,22 +1372,22 @@ flowchart LR
 
 ### 10.2 Complete Diagnostic Table
 
-| #   | Symptom                             | Layer        | Root Cause                                           | Diagnosis                                        | Existing Solution                            | Possible Improvement                                |
-| --- | ----------------------------------- | ------------ | ---------------------------------------------------- | ------------------------------------------------ | -------------------------------------------- | --------------------------------------------------- |
-| 1   | App freezes when opening large MCAP | MCAP Reading | Unindexed file trying to load everything into memory | Check if MCAP has summary section                | 1GB limit for unindexed                      | Partial streaming for unindexed                     |
-| 2   | Slow initialization (>10s)          | MCAP Reading | Too many chunk indexes to parse                      | Measure time in `McapIndexedReader.Initialize()` | Preload decompressHandlers                   | Index caching between sessions                      |
-| 3   | Choppy playback                     | Player Tick  | Too many messages in 300ms tick window               | Count msgs/tick in debug                         | 300ms cap + EMA smoothing                    | Adaptive tick window, message sampling              |
-| 4   | Stutter when starting play          | Buffering    | Empty buffer, waiting for min read-ahead (1s)        | Observe "buffering" state                        | Producer-consumer with condvar               | Predictive pre-buffering                            |
-| 5   | OOM / tab crash                     | Caching      | Total cache > tab's available memory                 | Monitor `getCacheSize()`                         | 600MB cap + LRU eviction                     | Adaptive cache sizing based on `performance.memory` |
-| 6   | Slow seek in large MCAP             | MCAP I/O     | Seek requires finding correct chunk + decompressing  | Measure time of `getBackfillMessages()`          | Cache reuses already-read blocks             | In-memory chunk index with binary search            |
-| 7   | Low FPS in 3D                       | Rendering    | Point clouds with 500k+ points                       | GPU memory in DevTools                           | LOD, DynamicBufferGeometry                   | Octree culling, point budget                        |
-| 8   | Low FPS with decay                  | Rendering    | History accumulates geometries                       | Count objects in scene                           | `RenderObjectHistory` with limit             | Instanced rendering for decay                       |
-| 9   | Jank when expanding RawMessages     | Panel/React  | DOM explosion without virtualization                 | React DevTools profiler                          | VirtualizedTree with @tanstack/react-virtual | Lazy expansion (load on demand)                     |
-| 10  | Delayed live messages               | WebSocket    | Publisher sends faster than UI processes             | Latency between publish and render               | No specific throttle                         | Message dropping / sampling                         |
-| 11  | Script execution lag                | User Scripts | Script executes for each message                     | Measure time per execution in worker             | Worker isolation                             | Batch execution, throttle                           |
-| 12  | Slow images                         | Rendering    | Large image decode on main thread                    | Performance profiler (decode time)               | `WorkerImageDecoder`                         | WASM decoder, GPU decode                            |
-| 13  | Memory grows continuously           | All          | Leaks in closures, event listeners, caches           | Heap snapshot comparison                         | N/A                                          | Periodic cache purge, WeakRef                       |
-| 14  | Slow remote file seek               | Remote I/O   | HTTP range request + network latency                 | Network tab, cache hit ratio                     | 500MB CachedFilelike                         | Predictive prefetch                                 |
+| #   | Symptom                             | Layer        | Root Cause                                           | Diagnosis                                        | Existing Solution                            | Possible Improvement                                                                                               |
+| --- | ----------------------------------- | ------------ | ---------------------------------------------------- | ------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 1   | App freezes when opening large MCAP | MCAP Reading | Unindexed file trying to load everything into memory | Check if MCAP has summary section                | 1GB limit for unindexed                      | Partial streaming for unindexed                                                                                    |
+| 2   | Slow initialization (>10s)          | MCAP Reading | Too many chunk indexes to parse                      | Measure time in `McapIndexedReader.Initialize()` | Preload decompressHandlers                   | Index caching between sessions                                                                                     |
+| 3   | Choppy playback                     | Player Tick  | Too many messages in 300ms tick window               | Count msgs/tick in debug                         | 300ms cap + EMA smoothing                    | Adaptive tick window, message sampling, WASM deserialization for complex schemas (⚠️ high boundary cost — see 5.5) |
+| 4   | Stutter when starting play          | Buffering    | Empty buffer, waiting for min read-ahead (1s)        | Observe "buffering" state                        | Producer-consumer with condvar               | Predictive pre-buffering                                                                                           |
+| 5   | OOM / tab crash                     | Caching      | Total cache > tab's available memory                 | Monitor `getCacheSize()`                         | 600MB cap + LRU eviction                     | Adaptive cache sizing based on `performance.memory`                                                                |
+| 6   | Slow seek in large MCAP             | MCAP I/O     | Seek requires finding correct chunk + decompressing  | Measure time of `getBackfillMessages()`          | Cache reuses already-read blocks             | In-memory chunk index with binary search                                                                           |
+| 7   | Low FPS in 3D                       | Rendering    | Point clouds with 500k+ points                       | GPU memory in DevTools                           | LOD, DynamicBufferGeometry                   | Octree culling, point budget, **WASM point cloud processing** (`wasm-pointcloud` — see 5.5)                        |
+| 8   | Low FPS with decay                  | Rendering    | History accumulates geometries                       | Count objects in scene                           | `RenderObjectHistory` with limit             | Instanced rendering for decay                                                                                      |
+| 9   | Jank when expanding RawMessages     | Panel/React  | DOM explosion without virtualization                 | React DevTools profiler                          | VirtualizedTree with @tanstack/react-virtual | Lazy expansion (load on demand)                                                                                    |
+| 10  | Delayed live messages               | WebSocket    | Publisher sends faster than UI processes             | Latency between publish and render               | No specific throttle                         | Message dropping / sampling                                                                                        |
+| 11  | Script execution lag                | User Scripts | Script executes for each message                     | Measure time per execution in worker             | Worker isolation                             | Batch execution, throttle                                                                                          |
+| 12  | Slow images                         | Rendering    | Large image decode on main thread                    | Performance profiler (decode time)               | `WorkerImageDecoder`                         | **WASM image decoder** (`wasm-image` — see 5.5), GPU decode                                                        |
+| 13  | Memory grows continuously           | All          | Leaks in closures, event listeners, caches           | Heap snapshot comparison                         | N/A                                          | Periodic cache purge, WeakRef                                                                                      |
+| 14  | Slow remote file seek               | Remote I/O   | HTTP range request + network latency                 | Network tab, cache hit ratio                     | 500MB CachedFilelike                         | Predictive prefetch                                                                                                |
 
 ### 10.3 Prioritization by Impact
 
