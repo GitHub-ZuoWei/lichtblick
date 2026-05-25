@@ -37,6 +37,24 @@ export class LayoutManager {
     await this.page.getByRole("menuitem", { name: "Revert" }).click();
   }
 
+  public async renameLayout(currentName: string, newName: string): Promise<void> {
+    const layoutRow = this.page.getByRole("listitem").filter({ hasText: currentName });
+    await layoutRow.hover();
+    await layoutRow.getByTestId("layout-actions").click();
+    await this.page.getByRole("menuitem", { name: "Rename" }).click();
+    const nameField = layoutRow.getByRole("textbox");
+    await nameField.fill(newName);
+    await nameField.press("Enter");
+  }
+
+  public async deleteLayout(name: string): Promise<void> {
+    const layoutRow = this.page.getByRole("listitem").filter({ hasText: name });
+    await layoutRow.hover();
+    await layoutRow.getByTestId("layout-actions").click();
+    await this.page.getByRole("menuitem", { name: "Delete" }).click();
+    await this.page.getByRole("button", { name: "Delete" }).click();
+  }
+
   public async addTab(): Promise<void> {
     await this.page.getByTestId("add-tab").click();
   }

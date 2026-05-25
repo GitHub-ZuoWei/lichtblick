@@ -130,6 +130,20 @@ import { TEST_MCAP_URL } from "../../../fixtures/urls";
    mainWindow.locator('input[value="some-value"]')
    ```
 
+### Menu Item Selectors (Mandatory Convention)
+
+**ALWAYS** use `getByRole("menuitem", { name: "..." })` for menu items. **NEVER** use `getByTestId(...)` for menu items, even though `data-testid` attributes exist on `<MenuItem>` elements in the source code.
+
+```typescript
+// CORRECT — matches codebase convention
+await page.getByRole("menuitem", { name: "Delete" }).click();
+await page.getByRole("menuitem", { name: "Rename" }).click();
+await page.getByRole("menuitem", { name: "Revert" }).click();
+
+// WRONG — do NOT use even though data-testid="delete-layout" exists in source
+await page.getByTestId("delete-layout").click();
+```
+
 ### Toggle Button State Assertions
 
 ```typescript
@@ -143,6 +157,38 @@ await expect(button).toHaveAttribute("aria-pressed", "true")
 - XPath selectors
 - `nth(0)` without context — be specific about which element you mean
 
+### Hover-to-Reveal Elements (CSS `visibility: hidden`)
+
+Some interactive elements have `visibility: hidden` and only appear on hover. You **must** hover the parent element before clicking the hidden child, or Playwright will time out.
+
+**How to detect:** Read the component's `.style.ts` file and look for `visibility: "hidden"` rules tied to `:hover` pseudo-selectors.
+
+**Example — layout row action buttons** (`LayoutRow.style.ts`):
+
+The `layout-actions` button is hidden when a layout has no unsaved changes:
+
+```css
+".MuiListItemSecondaryAction-root": {
+  visibility: !hasModifications && !deletedOnServer && "hidden",
+},
+"&:hover .MuiListItemSecondaryAction-root": {
+  visibility: "visible",
+},
+```
+
+**Correct pattern — hover before clicking:**
+
+```typescript
+const layoutRow = page.getByRole("listitem").filter({ hasText: name });
+await layoutRow.hover();
+await layoutRow.getByTestId("layout-actions").click();
+await page.getByRole("menuitem", { name: "Delete" }).click();
+```
+
+**Exception:** When a layout HAS unsaved changes, the icon is always visible (it becomes the `unsaved-changes-icon`). The `revertLayout()` POM method skips hover because it only applies to modified layouts.
+
+**General rule:** Before clicking any element that might be hidden, check the component's style file for visibility rules. If the element is conditionally hidden, add a `hover()` call on its container.
+
 ---
 
 ## Page Object Models (POMs)
@@ -155,15 +201,17 @@ import { DataSourceDialog, Sidebar, PlayerControls, LayoutManager, ExtensionMana
 
 ### Available POMs
 
-| POM | Purpose | Key Methods |
-|-----|---------|-------------|
-| `DataSourceDialog` | Data source dialog interactions | `close()`, `openConnection()`, `isVisible()`, `getLocator()` |
-| `Sidebar` | Left/right sidebar tabs | `openLayoutsTab()`, `openTopicsTab()`, `openPanelSettingsTab()`, `openVariablesTab()`, `toggleLeftSidebar()`, `toggleRightSidebar()`, `getLeftSidebar()` |
-| `PlayerControls` | Playback controls | `play()`, `pause()`, `togglePlayback()`, `seekForward()`, `seekBackward()`, `setSpeed()`, `switchToEpochFormat()`, `getTimestampValue()`, `getPlayButton()`, `getSlider()`, `getProgressPlot()` |
-| `LayoutManager` | Layout CRUD | `openDefaultLayout()`, `createNewLayout()`, `selectLayout()`, `selectPanel()`, `importLayout()`, `revertLayout()`, `addTab()`, `getLayoutListItem()` |
-| `ExtensionManager` | Extension workflows | `open()`, `search()`, `findExtension()`, `selectExtension()`, `uninstall()`, `getSearchBar()` |
-| `AppMenu` | App menu navigation | `openFileMenu()`, `openViewMenu()`, `openFile()`, `importLayoutFromMenu()`, `openDataSource()`, `openConnection()`, `getMenuButton()` |
-| `Panels` | Panel operations | `addPanel()`, `addPanelFromSearch()`, `setTopicPath()`, `splitPanelDown()`, `getAddPanelButton()`, `getWorkspacePanels()`, `getLogPanelRoot()`, `getScrollToBottomButton()` |
+All POMs live in `e2e/page-objects/` and are re-exported from `e2e/page-objects/index.ts`. **Before writing a test, read the barrel file and then read the specific POM file(s) you plan to use** to discover available methods and their signatures.
+
+| POM | Purpose |
+|-----|---------|
+| `DataSourceDialog` | Data source dialog interactions |
+| `Sidebar` | Left/right sidebar tabs |
+| `PlayerControls` | Playback controls |
+| `LayoutManager` | Layout CRUD (create, rename, delete, import, revert) |
+| `ExtensionManager` | Extension install/uninstall workflows |
+| `AppMenu` | App menu navigation |
+| `Panels` | Panel add/configure operations |
 
 ### When to Use POMs vs Direct Selectors
 
@@ -224,6 +272,38 @@ await item.getByRole("button", { name: "Layout name" }).click({ button: "right" 
 await expect(mainWindow.getByRole("menuitem", { name: "Rename" })).toBeVisible();
 await mainWindow.keyboard.press("Escape"); // dismiss after assertion
 ```
+
+### Layout action menu (hover-to-reveal)
+
+For layout rows where the layout has no unsaved changes, the actions button is hidden until hover:
+
+```typescript
+// Full pattern: hover → actions → menu item → optional confirmation
+const layoutRow = page.getByRole("listitem").filter({ hasText: "My Layout" });
+await layoutRow.hover();
+await layoutRow.getByTestId("layout-actions").click();
+await page.getByRole("menuitem", { name: "Delete" }).click();
+
+// Destructive actions show a confirmation dialog
+await page.getByRole("button", { name: "Delete" }).click();
+```
+
+**Prefer the POM** when available:
+
+```typescript
+const layout = new LayoutManager(mainWindow);
+await layout.deleteLayout("My Layout");   // handles hover + menu + confirm
+await layout.renameLayout("Old", "New");  // handles hover + menu + fill + Enter
+```
+
+### Confirmation dialogs (destructive actions)
+
+Destructive actions (Delete, Revert with confirm) show a confirmation dialog:
+- Heading: e.g., `Delete "layoutName"?`
+- Message: `This action cannot be undone.`
+- Buttons: `getByRole("button", { name: "Delete" })` and `getByRole("button", { name: "Cancel" })`
+
+Always use `getByRole("button", { name: "..." })` for confirmation buttons, not `getByTestId`.
 
 ### Multi-tab BroadcastChannel tests (web only)
 
@@ -290,6 +370,13 @@ The MCP server is configured in `.vscode/mcp.json` with `--isolated`, `--browser
 
 ### Workflow
 
+> **MCP browser exploration is for WEB tests only.** Do not open a browser or
+> use any MCP browser tools when writing desktop (Electron) tests. Desktop tests
+> run headless via an Electron fixture — the MCP Chromium browser cannot drive
+> Electron, selectors may differ, and using it adds unnecessary overhead.
+> For desktop tests, discover selectors by reading source components and
+> existing test files.
+
 1. **Start the dev server** — `yarn web:serve` (for web tests)
 2. **Open Copilot in Agent mode**
 3. **Use MCP to explore the UI**:
@@ -304,7 +391,7 @@ The MCP server is configured in `.vscode/mcp.json` with `--isolated`, `--browser
 ### Key MCP Limitations
 
 - MCP controls the **web** app (Chrome) — it **cannot drive the Electron desktop app**
-- Desktop test selectors must be verified by reading existing desktop test files and source components
+- **Do not use MCP for desktop tests** — desktop test selectors must be discovered by reading existing desktop test files, Page Object Models (`e2e/page-objects/`), and source components. The Chromium browser controlled by MCP is not equivalent to the Electron runtime used by desktop tests.
 - MCP `browser_run_code` does not have access to Node.js globals (`process`, `require`) — use absolute paths or avoid file operations in code snippets
 - Screenshots and snapshots are saved under `.playwright-mcp/` (gitignored)
 

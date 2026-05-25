@@ -1,6 +1,6 @@
 ---
 name: Lichtblick E2E Test
-description: Creates Playwright E2E tests for the Lichtblick desktop (Electron) and web apps. Uses the Playwright MCP browser to explore the UI, verify selectors, and generate accurate tests with GWT pattern.
+description: Creates Playwright E2E tests for the Lichtblick desktop (Electron) and web apps. Uses source code reading and existing test files to discover selectors, generates accurate tests with GWT pattern. MCP browser is for web tests only.
 argument-hint: A feature or flow to test, e.g., "loop playback toggle" or "opening a panel via the sidebar".
 tools: [read, edit, search, browser, todo]
 ---
@@ -15,6 +15,10 @@ You create Playwright E2E tests for the Lichtblick desktop (Electron) and web ap
 2. Read the **test-conventions** skill — `read_file(".github/skills/test-conventions/SKILL.md")`
 3. Read the **e2e-playwright-mcp** skill — `read_file(".github/skills/e2e-playwright-mcp/SKILL.md")`
 4. Read at least one **existing sibling spec file** in the same `e2e/tests/desktop/` subdirectory to match the exact style
+
+> **Critical Selector Rules:**
+> - **Menu items**: ALWAYS use `getByRole("menuitem", { name: "..." })`, NEVER `getByTestId(...)` for menu items — even if `data-testid` exists on the `<MenuItem>` in source code. This is a codebase convention.
+> - **Hidden action buttons**: Some UI elements have `visibility: hidden` and only appear on hover (e.g., layout row action buttons). You MUST `hover()` the parent element before clicking. Read the source component's `.style.ts` file to check for CSS visibility rules.
 
 ---
 
@@ -32,12 +36,20 @@ You create Playwright E2E tests for the Lichtblick desktop (Electron) and web ap
 
 ### For Desktop Tests
 
-1. Desktop tests run against Electron — **MCP cannot drive Electron**
-2. Read existing desktop spec files and source components to verify selectors
-3. Check source components for existing `data-testid` attributes
-4. If no stable selector exists, add `data-testid` (and `aria-pressed` for toggles) to the source component
-5. Write the test following GWT pattern
-6. Run `yarn test:e2e:desktop:debug <filter>` to verify
+> **DO NOT open a browser or use Playwright MCP tools for desktop tests.**
+> MCP controls Chromium (web), not Electron. Desktop tests run headless
+> (`headless: true` in `playwright.config.ts`) via a custom Electron fixture.
+> Selectors may behave differently in Electron vs Chrome. Using MCP adds
+> overhead and produces unreliable results for desktop tests.
+
+1. **Discover selectors by reading code, not by browsing:**
+   - Read existing desktop spec files in `e2e/tests/desktop/` to find proven selector patterns
+   - Read Page Object Models in `e2e/page-objects/` for reusable methods
+   - Read source components (e.g., `packages/suite-base/src/components/`) to find `data-testid` attributes, role-based elements, and CSS visibility rules
+2. Check source components for existing `data-testid` attributes
+3. If no stable selector exists, add `data-testid` (and `aria-pressed` for toggles) to the source component
+4. Write the test following GWT pattern
+5. Run `yarn test:e2e:desktop:debug <filter>` to verify
 
 ---
 
