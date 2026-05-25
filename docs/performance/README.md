@@ -661,6 +661,9 @@ flowchart TB
         P7["WASM point cloud processing<br/>(⚠️ low boundary cost — see 5.5)"]
         P8["WASM image decoding<br/>(⚠️ low boundary cost — see 5.5)"]
         P9["WASM deserialization<br/>(⚠️ high boundary cost — see 5.5)"]
+        P10["Point Cloud → Worker<br/>(see 5.6 #1)"]
+        P11["WS Deserialization → Worker<br/>(see 5.6 #2)"]
+        P12["THREE.js → OffscreenCanvas<br/>(see 5.6 #3)"]
     end
 
     subgraph Monitor["📊 Monitoring APIs"]
@@ -958,6 +961,232 @@ The key insight is to **keep data in WASM memory as long as possible**, minimizi
 - Only the final `Float32Array` crosses back to JS for GPU upload
 
 This reduces boundary crossings from **4 per message** to **1 per frame**.
+
+### 5.6 Web Worker Offloading — Additional Opportunities
+
+While Lichtblick already offloads several CPU-intensive operations to Web Workers (MCAP reading, image decoding, Plot dataset building, user scripts), there are still **critical main-thread bottlenecks** that could be moved to Workers for significant performance gains.
+
+#### 5.6.1 Current Worker Usage
+
+```mermaid
+flowchart LR
+    subgraph Already["✅ Already in Workers"]
+        direction TB
+        W1["McapIterableSourceWorker<br/>(MCAP reading + decompression)"]
+        W2["WorkerSocketAdapter<br/>(WebSocket I/O only)"]
+        W3["WorkerImageDecoder<br/>(image format conversion)"]
+        W4["TimestampDatasetsBuilder<br/>(Plot dataset accumulation)"]
+        W5["CustomDatasetsBuilder<br/>(Plot X/Y building)"]
+        W6["OffscreenCanvasRenderer<br/>(Chart.js on OffscreenCanvas)"]
+        W7["UserScript Workers<br/>(script execution)"]
+    end
+
+    subgraph StillMain["⚠️ Still on Main Thread"]
+        direction TB
+        M1["Point Cloud buffer processing<br/>(100k+ points/frame)"]
+        M2["WebSocket deserialization<br/>(50k msgs/sec)"]
+        M3["THREE.js rendering<br/>(full scene every frame)"]
+        M4["Transform tree lookups<br/>(per renderable per frame)"]
+        M5["Message conversion<br/>(renderState per frame)"]
+    end
+
+    style Already fill:#e8f5e9
+    style StillMain fill:#ffcdd2
+```
+
+#### 5.6.2 Top 3 Worker Offloading Opportunities — Ranked by Impact
+
+##### #1 Point Cloud Buffer Processing → Dedicated Worker
+
+**Current:** `PointClouds.ts` → `#updatePointCloudBuffers()` runs **every frame at 60fps** on the main thread. It iterates 100k+ points using `DataView.getFloat32()` per-field, computes color conversion, and writes to `Float32Array`/`Uint8Array` geometry buffers.
+
+**Impact:** This is the **single heaviest CPU operation** on the main thread per frame. With multiple point cloud topics or decay enabled, it can consume 10-30ms per frame — more than the entire 16.6ms frame budget.
+
+**Proposed:** Move point cloud buffer processing to a dedicated Worker. The Worker receives the raw `Uint8Array` message data + field descriptors + color settings, produces typed arrays, and transfers them back via `Comlink.transfer()`. The main thread only does `gl.bufferData()` upload.
+
+```mermaid
+sequenceDiagram
+    participant Main as Main Thread
+    participant Worker as PointCloud Worker
+    participant GPU as WebGL
+
+    Main->>Worker: Comlink.transfer(PointCloud2 Uint8Array,<br/>field offsets, color mode)
+    Note over Worker: Process 100k+ points<br/>(tight loops, SIMD-friendly)
+    Worker-->>Main: Comlink.transfer(Float32Array positions,<br/>Uint8Array colors)
+    Main->>GPU: gl.bufferData(positions)
+    Main->>GPU: gl.bufferData(colors)
+    Note over Main: Total main thread cost:<br/>~1ms (buffer upload only)
+```
+
+| Metric                     | Current (Main Thread) | With Worker                    |
+| -------------------------- | --------------------- | ------------------------------ |
+| Main thread time per frame | 10-30ms (100k points) | ~1ms (buffer upload only)      |
+| Frame budget consumed      | 60-180%               | ~6%                            |
+| Multiple point clouds      | Compounds linearly    | Parallel in Worker             |
+| Latency introduced         | None                  | 1 frame (~16ms, imperceptible) |
+| Existing pattern           | —                     | Same as Plot's Comlink Workers |
+| Compatibility              | —                     | Needs async pipeline           |
+
+**Files affected:** `PointClouds.ts`, `pointExtensionUtils.ts`, `fieldReaders.ts`
+
+**Risk:** Introduces 1-frame latency between receiving the message and seeing it rendered. At 60fps this is 16ms — imperceptible to users.
+
+---
+
+##### #2 WebSocket Message Deserialization → Worker
+
+**Current:** `FoxgloveWebSocketPlayer` calls `chanInfo.parsedChannel.deserialize(data)` on the **main thread** for every live message (line 530 of `FoxgloveWebSocketPlayer/index.ts`). At 50k msgs/sec, this is CPU-bound deserialization competing with rendering.
+
+**Impact:** For live connections with high-frequency topics (LiDAR at 100Hz, IMU at 1kHz), deserialization can consume 5-15ms per emit cycle, causing jank.
+
+**Proposed:** Move deserialization into the existing `WorkerSocketAdapter` Worker (which currently only handles socket I/O). The Worker would deserialize messages using `parseChannel()` and transfer the results back.
+
+```mermaid
+flowchart TB
+    subgraph Current["Current Architecture"]
+        direction LR
+        CW["WorkerSocketAdapter<br/>(I/O only)"] -->|"raw bytes"| CM["Main Thread:<br/>parseChannel().deserialize()"]
+        CM --> CP["parsedMessages queue"]
+    end
+
+    subgraph Proposed["Proposed Architecture"]
+        direction LR
+        PW["WorkerSocketAdapter<br/>(I/O + deserialization)"] -->|"Comlink.transfer<br/>(deserialized messages)"| PM["Main Thread:<br/>ready to use"]
+        PM --> PP["parsedMessages queue"]
+    end
+
+    style Current fill:#fff3e0
+    style Proposed fill:#e8f5e9
+```
+
+| Metric                    | Current (Main Thread) | With Worker                            |
+| ------------------------- | --------------------- | -------------------------------------- |
+| Main thread CPU per msg   | ~0.5-2ms (complex)    | ~0 (transfer only)                     |
+| Jank with LiDAR @ 100Hz   | Frequent (5-15ms)     | None (Worker absorbs)                  |
+| Back-pressure handling    | None (accumulates)    | Worker can drop/sample                 |
+| Transfer overhead         | —                     | Structured clone for JS objects        |
+| Binary field optimization | —                     | `Uint8Array` fields transfer zero-copy |
+
+**Files affected:** `FoxgloveWebSocketPlayer/index.ts`, `WorkerSocketAdapter.ts`
+
+**Risk:** Deserialized JS objects require structured cloning (not transferable). However, for binary-heavy messages (e.g., `PointCloud2`), the large `data` field is a `Uint8Array` that CAN be transferred zero-copy — only small headers need cloning.
+
+---
+
+##### #3 THREE.js 3D Rendering → OffscreenCanvas Worker
+
+**Current:** The entire THREE.js render pipeline (scene traversal, frustum culling, draw calls, GPU synchronization) runs on the **main thread** in `Renderer.ts`. This includes transform tree lookups (`updatePose` per renderable per frame), raycasting, and multi-pass rendering (main + picker).
+
+**Impact:** With complex scenes (point clouds + meshes + transforms + multiple render passes), rendering consumes 8-20ms per frame. Combined with React reconciliation, this pushes total frame time well over the 16.6ms budget.
+
+**Proposed:** Use `OffscreenCanvas` to move the entire THREE.js render loop to a Worker — exactly as the Plot panel already does with Chart.js via `OffscreenCanvasRenderer`. The main thread only sends scene updates; the Worker owns the canvas.
+
+```mermaid
+flowchart LR
+    subgraph MainThread["Main Thread (React + Pipeline)"]
+        direction TB
+        MT1["MessagePipeline<br/>(message delivery)"]
+        MT2["React UI<br/>(settings, interactions)"]
+        MT3["Camera state<br/>(orbit controls)"]
+    end
+
+    subgraph WorkerThread["Worker (OffscreenCanvas)"]
+        direction TB
+        WT1["THREE.js Renderer"]
+        WT2["Transform Tree<br/>(updatePose per renderable)"]
+        WT3["Scene Graph<br/>(all renderables)"]
+        WT4["WebGL Context<br/>(draw calls)"]
+        WT5["Raycasting<br/>(hover/click picking)"]
+    end
+
+    MT1 -->|"message batches<br/>(Comlink.transfer)"| WT3
+    MT2 -->|"settings changes"| WT1
+    MT3 -->|"camera matrix"| WT1
+    WT5 -->|"pick results"| MT2
+
+    style MainThread fill:#e3f2fd
+    style WorkerThread fill:#e8f5e9
+```
+
+| Metric                  | Current (Main Thread) | With OffscreenCanvas Worker          |
+| ----------------------- | --------------------- | ------------------------------------ |
+| Main thread render time | 8-20ms/frame          | ~0 (handled in Worker)               |
+| React responsiveness    | Blocked during render | Fully responsive                     |
+| FPS independence        | Rendering blocks UI   | Worker renders at own pace           |
+| Transform tree cost     | Per-renderable/frame  | Runs in Worker, unblocks main        |
+| Event handling          | Direct                | Round-trip via messages              |
+| Existing pattern        | —                     | Plot panel's OffscreenCanvasRenderer |
+
+**Files affected:** `Renderer.ts`, `SceneExtension.ts`, `updatePose.ts`, all renderables
+
+**Risk:** This is the **highest complexity** change:
+
+- All scene state must be synchronized between threads via messages
+- Mouse/keyboard events require round-trips (adds input latency)
+- Settings changes need structured message passing
+- THREE.js supports `OffscreenCanvas` natively, but the integration requires significant refactoring
+- The Plot panel's `OffscreenCanvasRenderer` proves the pattern is viable in this codebase
+
+---
+
+#### 5.6.3 Summary — Impact vs Complexity
+
+```mermaid
+quadrantChart
+    title Worker Offloading: Impact vs Complexity
+    x-axis "Low Complexity" --> "High Complexity"
+    y-axis "Low Impact" --> "High Impact"
+    quadrant-1 "High Impact, High Complexity"
+    quadrant-2 "High Impact, Low Complexity"
+    quadrant-3 "Low Impact, Low Complexity"
+    quadrant-4 "Low Impact, High Complexity"
+    "Point Cloud → Worker": [0.3, 0.9]
+    "WS Deserialization → Worker": [0.45, 0.7]
+    "THREE.js → OffscreenCanvas": [0.85, 0.85]
+```
+
+| Rank | Candidate                   | Main Thread Savings | Complexity | Existing Pattern in Codebase    |
+| ---- | --------------------------- | ------------------- | ---------- | ------------------------------- |
+| 🥇 1 | Point Cloud → Worker        | 10-30ms/frame       | **Low**    | Plot uses same Comlink pattern  |
+| 🥈 2 | WS Deserialization → Worker | 5-15ms/emit         | **Medium** | File pipeline already does this |
+| 🥉 3 | THREE.js → OffscreenCanvas  | 8-20ms/frame        | **High**   | Plot's OffscreenCanvasRenderer  |
+
+**Combined effect of #1 + #2:** Removes 15-45ms of CPU work per frame from the main thread — enough to maintain 60fps even with dense point clouds over live WebSocket connections.
+
+#### 5.6.4 Worker Offloading vs WASM — Complementary Strategies
+
+These approaches are **not mutually exclusive**. The optimal architecture combines both:
+
+```mermaid
+flowchart LR
+    subgraph Optimal["🏆 Optimal: Worker + WASM Combined"]
+        direction TB
+        Step1["Worker receives PointCloud2 Uint8Array"]
+        Step2["WASM processes point cloud<br/>(SIMD, zero-GC, in Worker heap)"]
+        Step3["Worker transfers Float32Array to main"]
+        Step4["Main: gl.bufferData() only (~1ms)"]
+
+        Step1 --> Step2 --> Step3 --> Step4
+    end
+
+    subgraph Benefits["Benefits"]
+        B1["Main thread: free for React + UI"]
+        B2["Worker thread: native-speed WASM"]
+        B3["No GC pressure on main heap"]
+        B4["Zero-copy between WASM and Worker"]
+    end
+
+    Optimal --> Benefits
+
+    style Optimal fill:#e8f5e9
+    style Benefits fill:#e3f2fd
+```
+
+| Strategy          | What it solves                    | Best for                           |
+| ----------------- | --------------------------------- | ---------------------------------- |
+| **Worker only**   | Frees main thread from CPU work   | Any CPU-bound task                 |
+| **WASM only**     | Executes faster than JS           | Tight numeric loops on main thread |
+| **Worker + WASM** | Frees main thread AND runs faster | Point clouds, image decoding       |
 
 ---
 
@@ -1380,14 +1609,16 @@ flowchart LR
 | 4   | Stutter when starting play          | Buffering    | Empty buffer, waiting for min read-ahead (1s)        | Observe "buffering" state                        | Producer-consumer with condvar               | Predictive pre-buffering                                                                                           |
 | 5   | OOM / tab crash                     | Caching      | Total cache > tab's available memory                 | Monitor `getCacheSize()`                         | 600MB cap + LRU eviction                     | Adaptive cache sizing based on `performance.memory`                                                                |
 | 6   | Slow seek in large MCAP             | MCAP I/O     | Seek requires finding correct chunk + decompressing  | Measure time of `getBackfillMessages()`          | Cache reuses already-read blocks             | In-memory chunk index with binary search                                                                           |
-| 7   | Low FPS in 3D                       | Rendering    | Point clouds with 500k+ points                       | GPU memory in DevTools                           | LOD, DynamicBufferGeometry                   | Octree culling, point budget, **WASM point cloud processing** (`wasm-pointcloud` — see 5.5)                        |
+| 7   | Low FPS in 3D                       | Rendering    | Point clouds with 500k+ points                       | GPU memory in DevTools                           | LOD, DynamicBufferGeometry                   | Octree culling, point budget, **WASM point cloud processing** (see 5.5), **Worker offloading** (see 5.6 #1)        |
 | 8   | Low FPS with decay                  | Rendering    | History accumulates geometries                       | Count objects in scene                           | `RenderObjectHistory` with limit             | Instanced rendering for decay                                                                                      |
 | 9   | Jank when expanding RawMessages     | Panel/React  | DOM explosion without virtualization                 | React DevTools profiler                          | VirtualizedTree with @tanstack/react-virtual | Lazy expansion (load on demand)                                                                                    |
-| 10  | Delayed live messages               | WebSocket    | Publisher sends faster than UI processes             | Latency between publish and render               | No specific throttle                         | Message dropping / sampling                                                                                        |
+| 10  | Delayed live messages               | WebSocket    | Publisher sends faster than UI processes             | Latency between publish and render               | No specific throttle                         | Message dropping / sampling, **WS deserialization → Worker** (see 5.6 #2)                                          |
 | 11  | Script execution lag                | User Scripts | Script executes for each message                     | Measure time per execution in worker             | Worker isolation                             | Batch execution, throttle                                                                                          |
 | 12  | Slow images                         | Rendering    | Large image decode on main thread                    | Performance profiler (decode time)               | `WorkerImageDecoder`                         | **WASM image decoder** (`wasm-image` — see 5.5), GPU decode                                                        |
 | 13  | Memory grows continuously           | All          | Leaks in closures, event listeners, caches           | Heap snapshot comparison                         | N/A                                          | Periodic cache purge, WeakRef                                                                                      |
 | 14  | Slow remote file seek               | Remote I/O   | HTTP range request + network latency                 | Network tab, cache hit ratio                     | 500MB CachedFilelike                         | Predictive prefetch                                                                                                |
+| 15  | 3D panel blocks React UI            | Rendering    | THREE.js render loop on main thread (8-20ms/frame)   | Performance profiler (long tasks)                | None                                         | **THREE.js → OffscreenCanvas Worker** (see 5.6 #3)                                                                 |
+| 16  | Live WS jank with many topics       | WebSocket    | `deserialize()` runs on main thread per message      | Profiler: `deserialize` in flame chart           | `WorkerSocketAdapter` (I/O only)             | **Move deserialization into Worker** (see 5.6 #2)                                                                  |
 
 ### 10.3 Prioritization by Impact
 
