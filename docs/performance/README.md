@@ -48,6 +48,13 @@ flowchart TB
         BlockLoader["BlockLoader<br/>(Preloading for Panels)"]
     end
 
+    subgraph WSPlayerLayer["📡 WebSocket Player (Main Thread)"]
+        WSWorker["WorkerSocketAdapter<br/>(Socket I/O in Worker)"]
+        WSPlayer["FoxgloveWebSocketPlayer"]
+        WSDeser["parseChannel().deserialize()<br/>(⚠️ runs on Main Thread)"]
+        WSBuffer["parsedMessages queue<br/>(capped by CURRENT_FRAME_MAXIMUM_SIZE_BYTES)"]
+    end
+
     subgraph PlayerLayer["▶️ Player Layer"]
         IterablePlayer["IterablePlayer<br/>(State Machine + Tick Loop)"]
         UserScriptPlayer["UserScriptPlayer<br/>(Script Execution Workers)"]
@@ -66,7 +73,12 @@ flowchart TB
 
     LocalFile --> McapWorker
     RemoteURL --> McapWorker
-    WebSocket -.->|"Live (no Worker)"| IterablePlayer
+    WebSocket -.->|"Live"| WSWorker
+
+    WSWorker -->|"raw bytes"| WSPlayer
+    WSPlayer --> WSDeser
+    WSDeser --> WSBuffer
+    WSBuffer -->|"emitState()"| UserScriptPlayer
 
     McapWorker --> Comlink
     Comlink -->|"Uint8Array<br/>(zero-copy transfer)"| DeserSource
@@ -88,6 +100,7 @@ flowchart TB
     style WorkerLayer fill:#fff3e0
     style DeserLayer fill:#f3e5f5
     style BufferLayer fill:#e8f5e9
+    style WSPlayerLayer fill:#fff3e0
     style PlayerLayer fill:#fce4ec
     style PipelineLayer fill:#fffde7
     style PanelLayer fill:#f1f8e9
