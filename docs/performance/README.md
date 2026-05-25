@@ -95,16 +95,16 @@ flowchart TB
 
 ### Critical Performance Points (per layer)
 
-| Layer | Main Problem | Impact |
-|-------|-------------|--------|
-| Data Source | Disk / network I/O | Open and read latency |
-| Worker | Cross-thread communication overhead | Transfer latency |
-| Deserialization | CPU-bound (schema parsing) | Playback jank |
-| Buffering/Cache | Memory pressure | OOM, tab crash |
-| Player | Tick overflow (too many msgs/tick) | Choppy playback |
-| Rendering | GPU/CPU bound (point clouds, 3D) | Low FPS |
-| Panels (React) | Unnecessary re-renders | UI lag |
-| User Scripts | Per-message execution | Cumulative delay |
+| Layer           | Main Problem                        | Impact                |
+| --------------- | ----------------------------------- | --------------------- |
+| Data Source     | Disk / network I/O                  | Open and read latency |
+| Worker          | Cross-thread communication overhead | Transfer latency      |
+| Deserialization | CPU-bound (schema parsing)          | Playback jank         |
+| Buffering/Cache | Memory pressure                     | OOM, tab crash        |
+| Player          | Tick overflow (too many msgs/tick)  | Choppy playback       |
+| Rendering       | GPU/CPU bound (point clouds, 3D)    | Low FPS               |
+| Panels (React)  | Unnecessary re-renders              | UI lag                |
+| User Scripts    | Per-message execution               | Cumulative delay      |
 
 ---
 
@@ -145,14 +145,14 @@ flowchart LR
 
 ### Performance Comparison by Connection Type
 
-| Aspect | Local File | Remote URL | WebSocket |
-|--------|-----------|------------|-----------|
-| **Initial latency** | Low (local I/O) | Medium-High (index download) | Low (handshake) |
-| **Throughput** | High (SSD/NVMe) | Limited by network | Limited by network + publisher |
-| **Seek** | Fast (indexed) | Medium (range requests + cache) | N/A (live only) |
-| **Memory** | Worker buffer + cache | HTTP cache 500MB + Worker buffer | Live message buffer |
-| **40GB scenario** | ✅ Viable (indexed) | ⚠️ High seek latency | ❌ N/A |
-| **Back-pressure** | Controlled by player | Controlled by player | ⚠️ Can accumulate |
+| Aspect              | Local File            | Remote URL                       | WebSocket                      |
+| ------------------- | --------------------- | -------------------------------- | ------------------------------ |
+| **Initial latency** | Low (local I/O)       | Medium-High (index download)     | Low (handshake)                |
+| **Throughput**      | High (SSD/NVMe)       | Limited by network               | Limited by network + publisher |
+| **Seek**            | Fast (indexed)        | Medium (range requests + cache)  | N/A (live only)                |
+| **Memory**          | Worker buffer + cache | HTTP cache 500MB + Worker buffer | Live message buffer            |
+| **40GB scenario**   | ✅ Viable (indexed)   | ⚠️ High seek latency             | ❌ N/A                         |
+| **Back-pressure**   | Controlled by player  | Controlled by player             | ⚠️ Can accumulate              |
 
 ### Data Source Factories
 
@@ -176,27 +176,27 @@ flowchart TB
     subgraph MCAPFile["📄 MCAP File"]
         direction TB
         Header["Header<br/>(profile, library)"]
-        
+
         subgraph DataSection["Data Section (bulk of the file)"]
             direction TB
             Schema1["Schema 1"]
             Channel1["Channel 1<br/>(topic: /lidar)"]
             Channel2["Channel 2<br/>(topic: /camera)"]
-            
+
             subgraph Chunk1["Chunk 1 (compressed)"]
                 M1["Message 1<br/>t=0.0s"]
                 M2["Message 2<br/>t=0.1s"]
                 M3["Message 3<br/>t=0.2s"]
             end
-            
+
             subgraph Chunk2["Chunk 2 (compressed)"]
                 M4["Message 4<br/>t=0.3s"]
                 M5["Message 5<br/>t=0.4s"]
             end
-            
+
             ChunkN["... Chunk N"]
         end
-        
+
         subgraph Summary["Summary Section (footer)"]
             direction TB
             Stats["Statistics<br/>(message counts per channel)"]
@@ -224,7 +224,7 @@ flowchart LR
         HasIndex{{"chunkIndexes.length > 0<br/>AND channels > 0?"}}
         Indexed["McapIndexedIterableSource<br/>✅ Random access via index"]
         Unindexed["McapUnindexedIterableSource<br/>⚠️ Sequential, all in memory"]
-        
+
         TryIndexed --> HasIndex
         HasIndex -->|"Yes"| Indexed
         HasIndex -->|"No"| Unindexed
@@ -289,14 +289,14 @@ flowchart TB
 
 #### Factors That Scale the Problem
 
-| Factor | Typical Value | Problematic Value | Why it's a problem |
-|--------|--------------|-------------------|-------------------|
-| File size | 1-5 GB | 40+ GB | More chunks to index, more I/O |
-| Number of topics | 10-30 | 200+ | More channels to filter per chunk |
-| Msgs/second (total) | 1000 | 50,000+ | More messages per tick window |
-| Average msg size | 1 KB | 1 MB (point clouds) | Memory pressure in buffer |
-| Recording duration | 5 min | 2+ hours | More preload blocks |
-| Chunk size | 4 MB | 64 MB | Heavier decompression |
+| Factor              | Typical Value | Problematic Value   | Why it's a problem                |
+| ------------------- | ------------- | ------------------- | --------------------------------- |
+| File size           | 1-5 GB        | 40+ GB              | More chunks to index, more I/O    |
+| Number of topics    | 10-30         | 200+                | More channels to filter per chunk |
+| Msgs/second (total) | 1000          | 50,000+             | More messages per tick window     |
+| Average msg size    | 1 KB          | 1 MB (point clouds) | Memory pressure in buffer         |
+| Recording duration  | 5 min         | 2+ hours            | More preload blocks               |
+| Chunk size          | 4 MB          | 64 MB               | Heavier decompression             |
 
 ---
 
@@ -340,7 +340,7 @@ flowchart TB
 
     subgraph DeserProcess["DeserializingIterableSource"]
         ParseChannel["parseChannel()<br/>(determines deserializer)"]
-        
+
         subgraph Encodings["Supported Encodings"]
             ROS1["ROS1 (ros1msg)"]
             ROS2["ROS2 (cdr)"]
@@ -350,7 +350,7 @@ flowchart TB
         end
 
         Deserialize["deserialize(data)<br/>(schema-specific)"]
-        
+
         subgraph MemEst["Memory Estimation"]
             ObjSize["estimateMessageObjectSize()"]
             V8Model["V8 Object Model:<br/>- OBJECT_BASE_SIZE<br/>- COMPRESSED_POINTER_SIZE<br/>- HEAP_NUMBER_SIZE<br/>- MAX_NUM_FAST_PROPERTIES"]
@@ -378,11 +378,13 @@ flowchart TB
 **Problem:** With 50,000 messages/second, deserialization is CPU-bound.
 
 **Specific bottlenecks:**
+
 - **Protobuf/CDR with complex schemas:** Deep nested objects require many allocations
 - **Point Clouds (ROS):** `sensor_msgs/PointCloud2` has binary data that needs field-by-field interpretation
 - **Large strings:** JSON serialization/deserialization with large payloads
 
 **Implemented optimizations:**
+
 1. Worker thread separates deserialization from UI
 2. Transferable buffers avoid binary data copying
 3. 17ms batching limits volume per frame
@@ -407,7 +409,7 @@ flowchart TB
         Block2["Block B<br/>t=[5s, 10s]<br/>size: 8MB"]
         Block3["Block C<br/>t=[10s, 15s]<br/>size: 45MB"]
         BlockN["..."]
-        
+
         Eviction["Eviction Policy:<br/>1. LRU by lastAccess<br/>2. Behind read head<br/>3. Max total: 600MB<br/>4. Max per block: 50MB"]
 
         Cache --> Block1
@@ -422,7 +424,7 @@ flowchart TB
         Producer["Producer Thread<br/>(reads from CachingSource)"]
         Buffer["VecQueue (ring buffer)"]
         Consumer["Consumer<br/>(IterablePlayer tick)"]
-        
+
         ReadAhead["Read-Ahead: 10s default<br/>(120s for local MCAP)"]
         MinBuffer["Min Buffer: 1s<br/>(pauses playback if below)"]
 
@@ -437,7 +439,7 @@ flowchart TB
         Blocks["Fixed-duration blocks"]
         Preload["Per-topic preload<br/>(panels requesting allFrames)"]
         MaxCache["Cache budget:<br/>shared with BufferedSource"]
-        
+
         Blocks --> Preload
         Preload --> MaxCache
     end
@@ -459,20 +461,20 @@ flowchart TD
     Start["messageIterator(args)"] --> TopicChange{{"Topics changed?"}}
     TopicChange -->|"Yes"| PurgeCache["Purge entire cache<br/>(start from scratch)"]
     TopicChange -->|"No"| FindBlock{{"Block contains readHead?"}}
-    
+
     PurgeCache --> FindBlock
-    
+
     FindBlock -->|"Yes"| ReadFromCache["Read messages from block<br/>(starting at readHead)"]
     FindBlock -->|"No"| CheckAfter{{"Block exists after readHead?"}}
-    
+
     ReadFromCache --> UpdateReadHead["readHead = block.end + 1ns"]
     UpdateReadHead --> CheckDone{{"readHead > maxEnd?"}}
     CheckDone -->|"Yes"| Done["End of iteration"]
     CheckDone -->|"No"| FindBlock
-    
+
     CheckAfter -->|"Yes, with gap"| ReadSource["Read from source<br/>(fill gap)"]
     CheckAfter -->|"No"| ReadSource
-    
+
     ReadSource --> NewBlock["Create new CacheBlock"]
     NewBlock --> CheckSize{{"totalSize > 600MB?"}}
     CheckSize -->|"Yes"| Evict["Evict LRU blocks<br/>(behind read head)"]
@@ -488,15 +490,15 @@ flowchart TD
 
 ### 5.3 Critical Numbers (from code)
 
-| Constant | Value | File |
-|----------|-------|------|
-| `maxTotalSizeBytes` | 629,145,600 (600MB) | `CachingIterableSource.ts` |
-| `maxBlockSizeBytes` | 52,428,800 (50MB) | `CachingIterableSource.ts` |
-| `DEFAULT_READ_AHEAD_DURATION` | 10 seconds | `BufferedIterableSource.ts` |
-| `MIN_READ_AHEAD_DURATION` | 1 second | `BufferedIterableSource.ts` |
-| `readAheadDuration` (local MCAP) | 120 seconds | `McapLocalDataSourceFactory.ts` |
-| `DEFAULT_CACHE_SIZE_BYTES` (remote) | 524,288,000 (500MB) | `RemoteFileReadable.ts` |
-| Batch size (worker) | 17ms | `WorkerSerializedIterableSource.ts` |
+| Constant                            | Value               | File                                |
+| ----------------------------------- | ------------------- | ----------------------------------- |
+| `maxTotalSizeBytes`                 | 629,145,600 (600MB) | `CachingIterableSource.ts`          |
+| `maxBlockSizeBytes`                 | 52,428,800 (50MB)   | `CachingIterableSource.ts`          |
+| `DEFAULT_READ_AHEAD_DURATION`       | 10 seconds          | `BufferedIterableSource.ts`         |
+| `MIN_READ_AHEAD_DURATION`           | 1 second            | `BufferedIterableSource.ts`         |
+| `readAheadDuration` (local MCAP)    | 120 seconds         | `McapLocalDataSourceFactory.ts`     |
+| `DEFAULT_CACHE_SIZE_BYTES` (remote) | 524,288,000 (500MB) | `RemoteFileReadable.ts`             |
+| Batch size (worker)                 | 17ms                | `WorkerSerializedIterableSource.ts` |
 
 ### 5.4 Browser Memory Limit — The 4GB Ceiling (OOM)
 
@@ -508,31 +510,31 @@ Chromium-based browsers impose a hard limit of ~4GB for the V8 heap per renderer
 flowchart TB
     subgraph BrowserProcess["🌐 Renderer Process (Chrome Tab)"]
         direction TB
-        
+
         subgraph JSHeap["JS Heap (~2GB typical max)"]
             Objects["JS Objects<br/>(deserialized messages)"]
             Closures["Closures & Scopes<br/>(React, event handlers)"]
             Strings["Strings<br/>(topic names, JSON)"]
         end
-        
+
         subgraph ArrayBuffers["ArrayBuffers (outside heap, but counts toward limit)"]
             CacheBlocks["Cache Blocks<br/>(CachingIterableSource: up to 600MB)"]
             WorkerTransfers["Transferable Buffers<br/>(Comlink transfers)"]
             WasmMemory["WASM Linear Memory<br/>(zstd, protobuf decoders)"]
         end
-        
+
         subgraph GPU["GPU Memory (WebGL)"]
             Textures["Textures<br/>(images, render targets)"]
             VBOs["Vertex Buffers<br/>(point clouds, meshes)"]
             FBOs["Framebuffers<br/>(MSAA, picker)"]
         end
-        
+
         subgraph Workers["Web Workers (separate heaps)"]
             McapWorker["McapIterableSourceWorker<br/>(own heap ~500MB)"]
             UserScriptWorker["UserScript Workers<br/>(own heap)"]
             ImageWorker["ImageDecoder Worker"]
         end
-        
+
         subgraph DOM["DOM & Layout"]
             DOMNodes["DOM Nodes<br/>(panels, virtualized items)"]
             CanvasCtx["Canvas Contexts<br/>(2D + WebGL)"]
@@ -561,16 +563,16 @@ flowchart TB
 
 #### Memory Consumption — Normal vs Problematic Scenario
 
-| Component | Normal Scenario (5GB MCAP, 30 topics) | Problematic Scenario (40GB MCAP, 200+ topics, point clouds) |
-|-----------|---------------------------------------|-------------------------------------------------------------|
-| Cache blocks (CachingIterableSource) | ~200MB | ~600MB (cap reached) |
-| Deserialized messages in memory | ~100MB | ~400MB+ |
-| BlockLoader (preload allFrames) | ~50MB | ~300MB+ |
-| WebGL buffers (3D panel) | ~50MB | ~500MB+ (multiple point clouds with decay) |
-| React component tree + DOM | ~30MB | ~80MB |
-| WASM heaps (decoders) | ~20MB | ~50MB |
-| V8 overhead (GC metadata, hidden classes) | ~50MB | ~150MB |
-| **TOTAL** | **~500MB** | **~2.1GB+** |
+| Component                                 | Normal Scenario (5GB MCAP, 30 topics) | Problematic Scenario (40GB MCAP, 200+ topics, point clouds) |
+| ----------------------------------------- | ------------------------------------- | ----------------------------------------------------------- |
+| Cache blocks (CachingIterableSource)      | ~200MB                                | ~600MB (cap reached)                                        |
+| Deserialized messages in memory           | ~100MB                                | ~400MB+                                                     |
+| BlockLoader (preload allFrames)           | ~50MB                                 | ~300MB+                                                     |
+| WebGL buffers (3D panel)                  | ~50MB                                 | ~500MB+ (multiple point clouds with decay)                  |
+| React component tree + DOM                | ~30MB                                 | ~80MB                                                       |
+| WASM heaps (decoders)                     | ~20MB                                 | ~50MB                                                       |
+| V8 overhead (GC metadata, hidden classes) | ~50MB                                 | ~150MB                                                      |
+| **TOTAL**                                 | **~500MB**                            | **~2.1GB+**                                                 |
 
 #### Multiplier Effect — How It Reaches Crash
 
@@ -614,15 +616,15 @@ flowchart LR
 
 #### Desktop (Electron) vs Web — Memory Limits
 
-| Aspect | Desktop (Electron) | Web (Chrome/Firefox) |
-|--------|--------------------|--------------------|
-| **V8 Limit** | Configurable via `--max-old-space-size` | ~4GB (browser hard limit) |
-| **Total available memory** | System memory (8-64GB+) | Shared across all tabs |
-| **Renderer process** | Dedicated process | Shared with extensions, DevTools |
-| **ArrayBuffers** | Can exceed heap (mmap) | Count toward process limit |
-| **Crash behavior** | Can use swap, degrades gracefully | Immediate tab kill (OOM killer) |
-| **Possible mitigation** | `app.commandLine.appendSwitch('max-old-space-size', '8192')` | None (browser limit) |
-| **40GB MCAP scenario** | ✅ Works with proper configuration | ⚠️ High OOM risk |
+| Aspect                     | Desktop (Electron)                                           | Web (Chrome/Firefox)             |
+| -------------------------- | ------------------------------------------------------------ | -------------------------------- |
+| **V8 Limit**               | Configurable via `--max-old-space-size`                      | ~4GB (browser hard limit)        |
+| **Total available memory** | System memory (8-64GB+)                                      | Shared across all tabs           |
+| **Renderer process**       | Dedicated process                                            | Shared with extensions, DevTools |
+| **ArrayBuffers**           | Can exceed heap (mmap)                                       | Count toward process limit       |
+| **Crash behavior**         | Can use swap, degrades gracefully                            | Immediate tab kill (OOM killer)  |
+| **Possible mitigation**    | `app.commandLine.appendSwitch('max-old-space-size', '8192')` | None (browser limit)             |
+| **40GB MCAP scenario**     | ✅ Works with proper configuration                           | ⚠️ High OOM risk                 |
 
 #### Mitigation Strategies
 
@@ -694,21 +696,21 @@ stateDiagram-v2
     preinit --> initialize: setListener()
     initialize --> start_play: source initialized
     start_play --> idle: emit initial state
-    
+
     idle --> play: play()
     idle --> seek_backfill: seek()
     idle --> close: close()
-    
+
     play --> idle: pause / end of data
     play --> seek_backfill: seek while playing
     play --> reset_playback_iterator: topics changed
     play --> close: close()
-    
+
     seek_backfill --> idle: backfill complete
     seek_backfill --> play: backfill + resume
-    
+
     reset_playback_iterator --> play: iterator reset
-    
+
     close --> [*]
 ```
 
@@ -719,21 +721,21 @@ flowchart TB
     TickStart["tick() called"] --> IsPlaying{{"isPlaying?"}}
     IsPlaying -->|"No"| Return["return (no-op)"]
     IsPlaying -->|"Yes"| CalcDuration["Calculate durationMillis:<br/>tickTime - lastTickMillis<br/>(default: 20ms if first tick)"]
-    
+
     CalcDuration --> CalcRange["rangeMillis = min(duration × speed, 300ms)<br/>Smoothing: 0.9 × lastRange + 0.1 × newRange"]
-    
+
     CalcRange --> CalcEnd["targetTime = currentTime + rangeMillis<br/>end = clamp(targetTime, start, untilTime)"]
-    
+
     CalcEnd --> CheckLastStamp{{"lastStamp > end?"}}
     CheckLastStamp -->|"Yes"| ShortCircuit["Skip read:<br/>currentTime = end<br/>messages = []<br/>emit state"]
     CheckLastStamp -->|"No"| ReadLoop["Loop: read from iterator"]
-    
+
     ReadLoop --> ReadMsg["msg = iterator.next()"]
     ReadMsg --> CheckMsg{{"msg.timestamp <= end?"}}
     CheckMsg -->|"Yes"| AddMsg["msgEvents.push(msg)<br/>receivedBytes += msg.size"]
     AddMsg --> ReadMsg
     CheckMsg -->|"No"| SaveStamp["lastStamp = msg.timestamp<br/>(reused in next tick)"]
-    
+
     SaveStamp --> Emit["currentTime = end<br/>messages = msgEvents<br/>queueEmitState()"]
     ShortCircuit --> Emit
 
@@ -748,12 +750,14 @@ flowchart TB
 **Key problem:** With many messages in a short period, a single tick can process thousands of messages.
 
 **Protection mechanisms:**
+
 1. **300ms cap:** Never reads more than 300ms of data per tick (even at high speed)
 2. **EMA Smoothing:** Smooths variations between ticks (prevents oscillations)
 3. **Short-circuit via lastStamp:** If the next message is after tick end, skips reading
 4. **Sampling (DeserializingIterableSource):** `setSamplingWindowEnd()` allows limiting the window
 
 **Problematic scenario:**
+
 ```
 MCAP with LiDAR at 100Hz, each msg = 1MB
 → In 300ms tick: 30 messages × 1MB = 30MB of deserialized data per tick
@@ -775,7 +779,7 @@ flowchart TB
 
     subgraph Renderer["Renderer (THREE.js)"]
         direction TB
-        
+
         subgraph Extensions["Scene Extensions"]
             PointClouds["PointClouds"]
             Images["Images"]
@@ -832,12 +836,12 @@ flowchart TB
     subgraph Processing["Processing"]
         FieldReaders["FieldReaders<br/>(getReader per field type)"]
         ColorConvert["Color Conversion<br/>(gradient/colormap/rgb/rgba)"]
-        
+
         subgraph Geometry["DynamicBufferGeometry"]
             PosAttr["position: Float32Array(N×3)"]
             ColAttr["color: Uint8Array(N×4)"]
         end
-        
+
         Upload["GPU Upload<br/>(gl.bufferData)"]
     end
 
@@ -862,14 +866,14 @@ flowchart TB
 
 ### 7.3 3D Performance Problems
 
-| Problem | Cause | Impact | Mitigation |
-|---------|-------|--------|-----------|
-| **Giant point clouds** | 100k+ points per frame, multiple clouds | GPU memory + draw calls | `DynamicBufferGeometry` (reuses buffers), LOD |
-| **Deep transform tree** | Hundreds of TF frames | CPU per message (lookup chain) | `MAX_TRANSFORM_MESSAGES` limit, preloading |
-| **Decay/History** | `decayTime > 0` keeps history | Memory accumulates geometries | `RenderObjectHistory` with limit |
-| **Image decoding** | Large images (1920×1080+) | CPU on main thread | `WorkerImageDecoder` (offload) |
-| **Shader compilation** | Many different materials | Stutter on first render | Shader key caching (patched THREE.js) |
-| **Object picking** | Raycasting on many objects | CPU spike on hover/click | `HOVER_PICK_THROTTLE_MS`, layer-based |
+| Problem                 | Cause                                   | Impact                         | Mitigation                                    |
+| ----------------------- | --------------------------------------- | ------------------------------ | --------------------------------------------- |
+| **Giant point clouds**  | 100k+ points per frame, multiple clouds | GPU memory + draw calls        | `DynamicBufferGeometry` (reuses buffers), LOD |
+| **Deep transform tree** | Hundreds of TF frames                   | CPU per message (lookup chain) | `MAX_TRANSFORM_MESSAGES` limit, preloading    |
+| **Decay/History**       | `decayTime > 0` keeps history           | Memory accumulates geometries  | `RenderObjectHistory` with limit              |
+| **Image decoding**      | Large images (1920×1080+)               | CPU on main thread             | `WorkerImageDecoder` (offload)                |
+| **Shader compilation**  | Many different materials                | Stutter on first render        | Shader key caching (patched THREE.js)         |
+| **Object picking**      | Raycasting on many objects              | CPU spike on hover/click       | `HOVER_PICK_THROTTLE_MS`, layer-based         |
 
 ### 7.4 Level of Detail (LOD)
 
@@ -877,8 +881,8 @@ flowchart TB
 // packages/suite-base/src/panels/ThreeDeeRender/lod.ts
 enum DetailLevel {
   Low,
-  Medium, 
-  High
+  Medium,
+  High,
 }
 // msaaSamples varies by level: Low=0, Medium=2, High=4
 ```
@@ -900,7 +904,7 @@ flowchart TB
     subgraph Adapter["PanelExtensionAdapter"]
         WatchedFields["watchedFields<br/>(Set: 'currentFrame', 'topics', etc.)"]
         BuildRenderState["buildRenderState()<br/>(memoized builder)"]
-        
+
         subgraph Checks["Dirty Checks"]
             TopicChange["topics !== prevTopics?"]
             FrameChange["currentFrame !== prevFrame?"]
@@ -973,16 +977,16 @@ flowchart TB
 
 ### 8.3 React Performance Patterns in Lichtblick
 
-| Pattern | Where it's used | Problem it solves |
-|---------|----------------|-------------------|
-| `useMemo` / `useCallback` | All panels | Avoids recalculations on each render |
-| `memo()` (React.memo) | `VirtualizedTree` | Avoids re-rendering the entire tree |
-| `useLatest` (react-use) | Config refs | Avoids panel re-creation |
-| `useDebouncedCallback` | Settings/Config save | Avoids excessive saves |
-| `watchedFields` | Panel render state | Filters irrelevant data |
-| `memoizeWeak` | renderState builder | Cache with GC-friendly keys |
-| `pauseFrame` | Panel lifecycle | Synchronizes renders with pipeline |
-| Virtualization | RawMessages, large lists | Renders only what's visible |
+| Pattern                   | Where it's used          | Problem it solves                    |
+| ------------------------- | ------------------------ | ------------------------------------ |
+| `useMemo` / `useCallback` | All panels               | Avoids recalculations on each render |
+| `memo()` (React.memo)     | `VirtualizedTree`        | Avoids re-rendering the entire tree  |
+| `useLatest` (react-use)   | Config refs              | Avoids panel re-creation             |
+| `useDebouncedCallback`    | Settings/Config save     | Avoids excessive saves               |
+| `watchedFields`           | Panel render state       | Filters irrelevant data              |
+| `memoizeWeak`             | renderState builder      | Cache with GC-friendly keys          |
+| `pauseFrame`              | Panel lifecycle          | Synchronizes renders with pipeline   |
+| Virtualization            | RawMessages, large lists | Renders only what's visible          |
 
 ---
 
@@ -1035,6 +1039,7 @@ flowchart TB
 **Execution model:** For EACH message on the subscribed topic, the script executes once.
 
 **Problematic scenario:**
+
 ```
 Topic /lidar at 100Hz → 100 executions/second of the script
 If the script takes 5ms per execution → 500ms/s spent on scripts
@@ -1092,37 +1097,37 @@ flowchart LR
 
 ### 10.2 Complete Diagnostic Table
 
-| # | Symptom | Layer | Root Cause | Diagnosis | Existing Solution | Possible Improvement |
-|---|---------|-------|------------|-----------|-------------------|---------------------|
-| 1 | App freezes when opening large MCAP | MCAP Reading | Unindexed file trying to load everything into memory | Check if MCAP has summary section | 1GB limit for unindexed | Partial streaming for unindexed |
-| 2 | Slow initialization (>10s) | MCAP Reading | Too many chunk indexes to parse | Measure time in `McapIndexedReader.Initialize()` | Preload decompressHandlers | Index caching between sessions |
-| 3 | Choppy playback | Player Tick | Too many messages in 300ms tick window | Count msgs/tick in debug | 300ms cap + EMA smoothing | Adaptive tick window, message sampling |
-| 4 | Stutter when starting play | Buffering | Empty buffer, waiting for min read-ahead (1s) | Observe "buffering" state | Producer-consumer with condvar | Predictive pre-buffering |
-| 5 | OOM / tab crash | Caching | Total cache > tab's available memory | Monitor `getCacheSize()` | 600MB cap + LRU eviction | Adaptive cache sizing based on `performance.memory` |
-| 6 | Slow seek in large MCAP | MCAP I/O | Seek requires finding correct chunk + decompressing | Measure time of `getBackfillMessages()` | Cache reuses already-read blocks | In-memory chunk index with binary search |
-| 7 | Low FPS in 3D | Rendering | Point clouds with 500k+ points | GPU memory in DevTools | LOD, DynamicBufferGeometry | Octree culling, point budget |
-| 8 | Low FPS with decay | Rendering | History accumulates geometries | Count objects in scene | `RenderObjectHistory` with limit | Instanced rendering for decay |
-| 9 | Jank when expanding RawMessages | Panel/React | DOM explosion without virtualization | React DevTools profiler | VirtualizedTree with @tanstack/react-virtual | Lazy expansion (load on demand) |
-| 10 | Delayed live messages | WebSocket | Publisher sends faster than UI processes | Latency between publish and render | No specific throttle | Message dropping / sampling |
-| 11 | Script execution lag | User Scripts | Script executes for each message | Measure time per execution in worker | Worker isolation | Batch execution, throttle |
-| 12 | Slow images | Rendering | Large image decode on main thread | Performance profiler (decode time) | `WorkerImageDecoder` | WASM decoder, GPU decode |
-| 13 | Memory grows continuously | All | Leaks in closures, event listeners, caches | Heap snapshot comparison | N/A | Periodic cache purge, WeakRef |
-| 14 | Slow remote file seek | Remote I/O | HTTP range request + network latency | Network tab, cache hit ratio | 500MB CachedFilelike | Predictive prefetch |
+| #   | Symptom                             | Layer        | Root Cause                                           | Diagnosis                                        | Existing Solution                            | Possible Improvement                                |
+| --- | ----------------------------------- | ------------ | ---------------------------------------------------- | ------------------------------------------------ | -------------------------------------------- | --------------------------------------------------- |
+| 1   | App freezes when opening large MCAP | MCAP Reading | Unindexed file trying to load everything into memory | Check if MCAP has summary section                | 1GB limit for unindexed                      | Partial streaming for unindexed                     |
+| 2   | Slow initialization (>10s)          | MCAP Reading | Too many chunk indexes to parse                      | Measure time in `McapIndexedReader.Initialize()` | Preload decompressHandlers                   | Index caching between sessions                      |
+| 3   | Choppy playback                     | Player Tick  | Too many messages in 300ms tick window               | Count msgs/tick in debug                         | 300ms cap + EMA smoothing                    | Adaptive tick window, message sampling              |
+| 4   | Stutter when starting play          | Buffering    | Empty buffer, waiting for min read-ahead (1s)        | Observe "buffering" state                        | Producer-consumer with condvar               | Predictive pre-buffering                            |
+| 5   | OOM / tab crash                     | Caching      | Total cache > tab's available memory                 | Monitor `getCacheSize()`                         | 600MB cap + LRU eviction                     | Adaptive cache sizing based on `performance.memory` |
+| 6   | Slow seek in large MCAP             | MCAP I/O     | Seek requires finding correct chunk + decompressing  | Measure time of `getBackfillMessages()`          | Cache reuses already-read blocks             | In-memory chunk index with binary search            |
+| 7   | Low FPS in 3D                       | Rendering    | Point clouds with 500k+ points                       | GPU memory in DevTools                           | LOD, DynamicBufferGeometry                   | Octree culling, point budget                        |
+| 8   | Low FPS with decay                  | Rendering    | History accumulates geometries                       | Count objects in scene                           | `RenderObjectHistory` with limit             | Instanced rendering for decay                       |
+| 9   | Jank when expanding RawMessages     | Panel/React  | DOM explosion without virtualization                 | React DevTools profiler                          | VirtualizedTree with @tanstack/react-virtual | Lazy expansion (load on demand)                     |
+| 10  | Delayed live messages               | WebSocket    | Publisher sends faster than UI processes             | Latency between publish and render               | No specific throttle                         | Message dropping / sampling                         |
+| 11  | Script execution lag                | User Scripts | Script executes for each message                     | Measure time per execution in worker             | Worker isolation                             | Batch execution, throttle                           |
+| 12  | Slow images                         | Rendering    | Large image decode on main thread                    | Performance profiler (decode time)               | `WorkerImageDecoder`                         | WASM decoder, GPU decode                            |
+| 13  | Memory grows continuously           | All          | Leaks in closures, event listeners, caches           | Heap snapshot comparison                         | N/A                                          | Periodic cache purge, WeakRef                       |
+| 14  | Slow remote file seek               | Remote I/O   | HTTP range request + network latency                 | Network tab, cache hit ratio                     | 500MB CachedFilelike                         | Predictive prefetch                                 |
 
 ### 10.3 Prioritization by Impact
 
-| Priority | Issue | Impact | Frequency |
-|----------|-------|--------|----------|
-| 🔴 High | OOM / Tab Crash | Very High | High |
-| 🔴 High | Choppy Playback | High | Very High |
-| 🔴 High | Low 3D FPS | High | High |
-| 🟡 Medium | Slow Seek | Medium-High | Medium |
-| 🟡 Medium | WebSocket backpressure | Medium | Medium |
-| 🟡 Medium | Slow Init | Medium | Medium-Low |
-| 🟢 Low | Script Lag | Medium-Low | Low |
-| 🟢 Low | Image decode | Low-Medium | Medium-High |
-| 🟢 Low | RawMsg jank | Low | Medium |
-| 🟢 Low | Remote seek | Medium-Low | Low |
+| Priority  | Issue                  | Impact      | Frequency   |
+| --------- | ---------------------- | ----------- | ----------- |
+| 🔴 High   | OOM / Tab Crash        | Very High   | High        |
+| 🔴 High   | Choppy Playback        | High        | Very High   |
+| 🔴 High   | Low 3D FPS             | High        | High        |
+| 🟡 Medium | Slow Seek              | Medium-High | Medium      |
+| 🟡 Medium | WebSocket backpressure | Medium      | Medium      |
+| 🟡 Medium | Slow Init              | Medium      | Medium-Low  |
+| 🟢 Low    | Script Lag             | Medium-Low  | Low         |
+| 🟢 Low    | Image decode           | Low-Medium  | Medium-High |
+| 🟢 Low    | RawMsg jank            | Low         | Medium      |
+| 🟢 Low    | Remote seek            | Medium-Low  | Low         |
 
 ---
 
@@ -1131,80 +1136,88 @@ flowchart LR
 ### Critical Files by Layer
 
 #### Data Sources
-| File | Responsibility |
-|------|---------------|
-| `packages/suite-base/src/dataSources/McapLocalDataSourceFactory.ts` | Player creation for local file |
-| `packages/suite-base/src/dataSources/RemoteDataSourceFactory.tsx` | Player creation for remote URL |
-| `packages/suite-base/src/dataSources/FoxgloveWebSocketDataSourceFactory.ts` | WebSocket player creation |
+
+| File                                                                        | Responsibility                 |
+| --------------------------------------------------------------------------- | ------------------------------ |
+| `packages/suite-base/src/dataSources/McapLocalDataSourceFactory.ts`         | Player creation for local file |
+| `packages/suite-base/src/dataSources/RemoteDataSourceFactory.tsx`           | Player creation for remote URL |
+| `packages/suite-base/src/dataSources/FoxgloveWebSocketDataSourceFactory.ts` | WebSocket player creation      |
 
 #### MCAP Reading
-| File | Responsibility |
-|------|---------------|
-| `packages/suite-base/src/players/IterablePlayer/Mcap/McapIterableSource.ts` | Entry point (file vs url) |
-| `packages/suite-base/src/players/IterablePlayer/Mcap/McapIndexedIterableSource.ts` | Indexed reading |
-| `packages/suite-base/src/players/IterablePlayer/Mcap/McapUnindexedIterableSource.ts` | Sequential reading |
-| `packages/suite-base/src/players/IterablePlayer/Mcap/McapIterableSourceWorker.worker.ts` | Worker thread |
-| `packages/suite-base/src/players/IterablePlayer/Mcap/RemoteFileReadable.ts` | HTTP range + cache |
-| `packages/suite-base/src/players/IterablePlayer/shared/MultiIterableSource.ts` | Multiple files |
+
+| File                                                                                     | Responsibility            |
+| ---------------------------------------------------------------------------------------- | ------------------------- |
+| `packages/suite-base/src/players/IterablePlayer/Mcap/McapIterableSource.ts`              | Entry point (file vs url) |
+| `packages/suite-base/src/players/IterablePlayer/Mcap/McapIndexedIterableSource.ts`       | Indexed reading           |
+| `packages/suite-base/src/players/IterablePlayer/Mcap/McapUnindexedIterableSource.ts`     | Sequential reading        |
+| `packages/suite-base/src/players/IterablePlayer/Mcap/McapIterableSourceWorker.worker.ts` | Worker thread             |
+| `packages/suite-base/src/players/IterablePlayer/Mcap/RemoteFileReadable.ts`              | HTTP range + cache        |
+| `packages/suite-base/src/players/IterablePlayer/shared/MultiIterableSource.ts`           | Multiple files            |
 
 #### Worker & Deserialization
-| File | Responsibility |
-|------|---------------|
-| `packages/suite-base/src/players/IterablePlayer/WorkerSerializedIterableSource.ts` | Comlink proxy (main thread) |
-| `packages/suite-base/src/players/IterablePlayer/WorkerSerializedIterableSourceWorker.ts` | Comlink host (worker) |
-| `packages/suite-base/src/players/IterablePlayer/DeserializingIterableSource.ts` | Deserialization pipeline |
-| `packages/suite-base/src/players/messageMemoryEstimation.ts` | V8 memory model |
+
+| File                                                                                     | Responsibility              |
+| ---------------------------------------------------------------------------------------- | --------------------------- |
+| `packages/suite-base/src/players/IterablePlayer/WorkerSerializedIterableSource.ts`       | Comlink proxy (main thread) |
+| `packages/suite-base/src/players/IterablePlayer/WorkerSerializedIterableSourceWorker.ts` | Comlink host (worker)       |
+| `packages/suite-base/src/players/IterablePlayer/DeserializingIterableSource.ts`          | Deserialization pipeline    |
+| `packages/suite-base/src/players/messageMemoryEstimation.ts`                             | V8 memory model             |
 
 #### Buffering & Caching
-| File | Responsibility |
-|------|---------------|
+
+| File                                                                       | Responsibility           |
+| -------------------------------------------------------------------------- | ------------------------ |
 | `packages/suite-base/src/players/IterablePlayer/BufferedIterableSource.ts` | Producer-consumer buffer |
-| `packages/suite-base/src/players/IterablePlayer/CachingIterableSource.ts` | LRU block cache |
-| `packages/suite-base/src/players/IterablePlayer/BlockLoader.ts` | Block-based preloading |
+| `packages/suite-base/src/players/IterablePlayer/CachingIterableSource.ts`  | LRU block cache          |
+| `packages/suite-base/src/players/IterablePlayer/BlockLoader.ts`            | Block-based preloading   |
 
 #### Player
-| File | Responsibility |
-|------|---------------|
+
+| File                                                               | Responsibility            |
+| ------------------------------------------------------------------ | ------------------------- |
 | `packages/suite-base/src/players/IterablePlayer/IterablePlayer.ts` | State machine + tick loop |
 
 #### User Scripts
-| File | Responsibility |
-|------|---------------|
-| `packages/suite-base/src/players/UserScriptPlayer/index.ts` | Player wrapper |
-| `packages/suite-base/src/players/UserScriptPlayer/transformerWorker/index.ts` | TS compilation |
-| `packages/suite-base/src/players/UserScriptPlayer/runtimeWorker/index.ts` | Script execution |
+
+| File                                                                          | Responsibility   |
+| ----------------------------------------------------------------------------- | ---------------- |
+| `packages/suite-base/src/players/UserScriptPlayer/index.ts`                   | Player wrapper   |
+| `packages/suite-base/src/players/UserScriptPlayer/transformerWorker/index.ts` | TS compilation   |
+| `packages/suite-base/src/players/UserScriptPlayer/runtimeWorker/index.ts`     | Script execution |
 
 #### 3D Rendering
-| File | Responsibility |
-|------|---------------|
-| `packages/suite-base/src/panels/ThreeDeeRender/ThreeDeeRender.tsx` | Panel component |
-| `packages/suite-base/src/panels/ThreeDeeRender/Renderer.ts` | THREE.js renderer core |
-| `packages/suite-base/src/panels/ThreeDeeRender/renderables/PointClouds.ts` | Point cloud rendering |
-| `packages/suite-base/src/panels/ThreeDeeRender/renderables/Images/WorkerImageDecoder.ts` | Image worker |
+
+| File                                                                                     | Responsibility         |
+| ---------------------------------------------------------------------------------------- | ---------------------- |
+| `packages/suite-base/src/panels/ThreeDeeRender/ThreeDeeRender.tsx`                       | Panel component        |
+| `packages/suite-base/src/panels/ThreeDeeRender/Renderer.ts`                              | THREE.js renderer core |
+| `packages/suite-base/src/panels/ThreeDeeRender/renderables/PointClouds.ts`               | Point cloud rendering  |
+| `packages/suite-base/src/panels/ThreeDeeRender/renderables/Images/WorkerImageDecoder.ts` | Image worker           |
 
 #### Panel/React
-| File | Responsibility |
-|------|---------------|
-| `packages/suite-base/src/components/PanelExtensionAdapter/PanelExtensionAdapter.tsx` | Panel lifecycle |
-| `packages/suite-base/src/components/PanelExtensionAdapter/renderState.ts` | Render state builder |
-| `packages/suite-base/src/panels/RawMessagesVirtual/VirtualizedTree.tsx` | Virtualized tree |
-| `packages/suite-base/src/panels/RawMessagesVirtual/flattenTreeData.ts` | Tree flattening |
+
+| File                                                                                 | Responsibility       |
+| ------------------------------------------------------------------------------------ | -------------------- |
+| `packages/suite-base/src/components/PanelExtensionAdapter/PanelExtensionAdapter.tsx` | Panel lifecycle      |
+| `packages/suite-base/src/components/PanelExtensionAdapter/renderState.ts`            | Render state builder |
+| `packages/suite-base/src/panels/RawMessagesVirtual/VirtualizedTree.tsx`              | Virtualized tree     |
+| `packages/suite-base/src/panels/RawMessagesVirtual/flattenTreeData.ts`               | Tree flattening      |
 
 ---
 
 ## Appendix: Glossary
 
-| Term | Definition |
-|------|-----------|
-| **MCAP** | File format for recording robotics data (replacement for ROS bags) |
-| **Chunk** | Compressed block of messages within an MCAP |
-| **Channel** | Equivalent to a ROS topic within the MCAP |
-| **Tick** | One read cycle of the player (typically aligned with requestAnimationFrame) |
-| **Read-ahead** | Amount of data preloaded ahead of the current playback position |
-| **Backfill** | Fetching the last message of each topic before the current time (for seek) |
-| **Block (cache)** | Cache segment with a defined time range |
-| **Block (preload)** | Time division for historical data preloading |
-| **Transferable** | JavaScript object whose ownership can be transferred between threads (zero-copy) |
-| **Comlink** | Library that abstracts Web Worker communication as function calls |
-| **LOD** | Level of Detail — visual quality adjustment based on complexity |
-| **EMA** | Exponential Moving Average — smoothing of temporal values |
+| Term                | Definition                                                                       |
+| ------------------- | -------------------------------------------------------------------------------- |
+| **MCAP**            | File format for recording robotics data (replacement for ROS bags)               |
+| **Chunk**           | Compressed block of messages within an MCAP                                      |
+| **Channel**         | Equivalent to a ROS topic within the MCAP                                        |
+| **Tick**            | One read cycle of the player (typically aligned with requestAnimationFrame)      |
+| **Read-ahead**      | Amount of data preloaded ahead of the current playback position                  |
+| **Backfill**        | Fetching the last message of each topic before the current time (for seek)       |
+| **Block (cache)**   | Cache segment with a defined time range                                          |
+| **Block (preload)** | Time division for historical data preloading                                     |
+| **Transferable**    | JavaScript object whose ownership can be transferred between threads (zero-copy) |
+| **Comlink**         | Library that abstracts Web Worker communication as function calls                |
+| **LOD**             | Level of Detail — visual quality adjustment based on complexity                  |
+| **EMA**             | Exponential Moving Average — smoothing of temporal values                        |
