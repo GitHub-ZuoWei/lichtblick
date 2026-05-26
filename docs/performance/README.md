@@ -178,6 +178,229 @@ FoxgloveWebSocketDataSourceFactory → FoxgloveWebSocketPlayer (live)
 RosbridgeDataSourceFactory      → FoxgloveWebSocketPlayer (live)
 ```
 
+### 2.1 WebSocket — Buffering, Accumulation, and Panel Data Lifecycle
+
+Unlike the file-based pipeline (which has centralized caching via `CachingIterableSource` 600MB LRU and `BufferedIterableSource` 120s read-ahead), the WebSocket path has **no centralized historical cache**. Instead, buffering and data accumulation happen at two distinct layers:
+
+#### Layer 1: Player-Level — `parsedMessages` Queue (Transient)
+
+The `FoxgloveWebSocketPlayer` accumulates deserialized messages in a `parsedMessages[]` array between debounced `emitState()` calls. This is a **transient buffer**, not a cache — messages are drained on each emit and cannot be recovered.
+
+```mermaid
+sequenceDiagram
+    participant WS as WebSocket
+    participant Worker as worker.ts<br/>(Web Worker)
+    participant Adapter as WorkerSocketAdapter<br/>(Main Thread)
+    participant Client as FoxgloveClient<br/>(Main Thread)
+    participant Player as FoxgloveWebSocketPlayer<br/>(Main Thread)
+    participant Pipeline as MessagePipeline
+    participant Panels as Panels
+
+    WS->>Worker: onmessage(ArrayBuffer)
+    Note over Worker: Zero processing —<br/>only postMessage + transfer
+
+    Worker->>Adapter: postMessage({type:"message", data}, [data])
+    Note over Worker,Adapter: ArrayBuffer transferred (zero-copy)
+
+    Adapter->>Client: this.onmessage(event.data)
+    Note over Adapter: Pure relay — no processing
+
+    Client->>Client: parseServerMessage(data)
+    Note over Client: DataView reads:<br/>subscriptionId (4B)<br/>timestamp (8B)<br/>payload slice<br/>⚡ Cheap (pointer arithmetic)
+
+    Client->>Player: emit("message", {subscriptionId, data})
+    Player->>Player: parsedChannel.deserialize(data)
+    Note over Player: ⚠️ EXPENSIVE — Main Thread<br/>Protobuf / CDR / JSON / FlatBuffer<br/>Creates full JS object graph
+
+    Player->>Player: parsedMessages.push(msg)<br/>parsedMessagesBytes += size
+    Note over Player: Accumulates between emits<br/>Cap: 400MB (CURRENT_FRAME_MAXIMUM_SIZE_BYTES)<br/>Evicts oldest to 80% when exceeded
+
+    Player->>Pipeline: emitState() (debounced)
+    Note over Player: parsedMessages drained to []<br/>parsedMessagesBytes reset to 0
+    Pipeline->>Panels: activeData.messages = currentFrame
+    Note over Panels: This batch = "currentFrame"<br/>⚠️ No history — only THIS batch
+```
+
+**Key behaviors:**
+- **Deserialization on Main Thread:** Both ws-protocol framing (`parseServerMessage`) and schema deserialization (`parsedChannel.deserialize`) run on the main thread. The Worker only handles raw socket I/O
+- **Debounced emit:** Multiple messages accumulate into a single batch before `emitState()` fires
+- **Drain on emit:** `parsedMessages` is reset to `[]` — no historical retention at the player level
+- **Tab throttling:** When the tab is inactive, `setTimeout` is throttled to ~1/sec, causing rapid message accumulation
+- **Eviction:** When `parsedMessagesBytes > 400MB`, oldest messages are spliced out until size drops to 80% (320MB)
+- **No `allFrames`:** WebSocket player does NOT provide `progress.messageCache.blocks` — panels cannot request historical data from the player
+
+#### Layer 2: Panel-Level — Per-Panel Data Accumulation
+
+Since the WebSocket player provides no historical data, each panel that needs history must **accumulate its own data** from successive `currentFrame` batches.
+
+```mermaid
+flowchart TB
+    subgraph WSPlayer["FoxgloveWebSocketPlayer"]
+        direction TB
+        Frame1["emitState() #1<br/>messages: [m1, m2, m3]"]
+        Frame2["emitState() #2<br/>messages: [m4, m5]"]
+        Frame3["emitState() #3<br/>messages: [m6, m7, m8, m9]"]
+    end
+
+    subgraph PlotPanel["Plot Panel (TimestampDatasetsBuilder)"]
+        direction TB
+        PlotWorker["Worker Thread<br/>(TimestampDatasetsBuilderImpl)"]
+        Current["series.current[]<br/>(accumulated datums)"]
+        Cap["Cap: 50,000 datums per series<br/>(MAX_CURRENT_DATUMS_PER_SERIES)"]
+        PlotWorker --> Current --> Cap
+    end
+
+    subgraph ThreeDeePanel["3D Panel (ThreeDeeRender)"]
+        direction TB
+        TF["Transform Tree<br/>(accumulated TF messages)"]
+        Scene["Scene Objects<br/>(latest message per topic)"]
+        Decay["Decay History<br/>(RenderObjectHistory)"]
+    end
+
+    subgraph RawMsgPanel["Raw Messages Panel"]
+        direction TB
+        Latest["Shows latest message only<br/>(no accumulation)"]
+    end
+
+    Frame1 -->|"currentFrame"| PlotPanel
+    Frame2 -->|"currentFrame"| PlotPanel
+    Frame3 -->|"currentFrame"| PlotPanel
+
+    Frame1 -->|"currentFrame"| ThreeDeePanel
+    Frame1 -->|"currentFrame"| RawMsgPanel
+
+    style WSPlayer fill:#fff3e0
+    style PlotPanel fill:#e8f5e9
+    style ThreeDeePanel fill:#e3f2fd
+    style RawMsgPanel fill:#f5f5f5
+```
+
+#### How Each Panel Handles WebSocket Data
+
+| Panel                  | Accumulation Strategy                                                     | Data Retention                     | Memory Growth         |
+| ---------------------- | ------------------------------------------------------------------------- | ---------------------------------- | --------------------- |
+| **Plot**               | `append-current` action → Worker accumulates datums in `series.current[]` | 50,000 datums/series (then culled) | Bounded (Worker heap) |
+| **3D (ThreeDee)**      | Latest message per topic; transform tree grows; decay keeps history       | Unbounded TF tree + decay limit    | Can grow significantly |
+| **Raw Messages**       | Shows latest message only, no history                                     | 1 message                          | Minimal               |
+| **Image**              | Shows latest image, no history                                            | 1 decoded image                    | Minimal               |
+| **Log**                | Appends log entries to virtualized list                                   | Configurable buffer                | Moderate              |
+| **State Transitions**  | Accumulates state history                                                 | Session duration                   | Can grow              |
+
+#### Deep Dive: Plot Panel with WebSocket Data
+
+The Plot panel is the best example of panel-level accumulation. It uses a dedicated Worker to accumulate and downsample data:
+
+```mermaid
+sequenceDiagram
+    participant Player as FoxgloveWebSocketPlayer
+    participant Coord as PlotCoordinator
+    participant Builder as TimestampDatasetsBuilder<br/>(Main Thread)
+    participant Worker as TimestampDatasetsBuilderImpl<br/>(Worker Thread)
+    participant Canvas as OffscreenCanvasRenderer<br/>(Worker Thread)
+
+    Player->>Coord: handlePlayerState(state)
+    Note over Coord: state.activeData.messages = currentFrame batch
+
+    Coord->>Builder: handlePlayerState(state)
+    Note over Builder: #hasRangeSource = false<br/>(WebSocket has no range source)
+
+    Builder->>Builder: buildCurrentSeriesActions()<br/>Extract datum {x, y} from each message
+
+    Builder->>Worker: Comlink: applyActions([append-current, ...])
+    Note over Worker: series.current.push(datums)<br/>Cap: 50,000 per series<br/>Cull oldest 25% when exceeded
+
+    Coord->>Worker: Comlink: getViewportDatasets(viewport)
+    Note over Worker: Merge series.full + series.current<br/>Downsample to viewport width<br/>Apply derivative if needed
+
+    Worker-->>Coord: datasets (downsampled)
+    Coord->>Canvas: Comlink: updateDatasets(datasets)
+    Canvas->>Canvas: Chart.js render on OffscreenCanvas
+```
+
+**Key distinction — `series.full[]` vs `series.current[]`:**
+
+| Property          | `series.full[]`                                             | `series.current[]`                                         |
+| ----------------- | ----------------------------------------------------------- | ---------------------------------------------------------- |
+| **Populated by**  | `handleMessageRange()` via `unstable_subscribeMessageRange` | `handlePlayerState()` via `currentFrame`                   |
+| **Data source**   | File-based range source (preloaded history)                 | Live `currentFrame` batches                                |
+| **WebSocket**     | **Empty** — no range source available                       | **Only data source** — all accumulated datums              |
+| **Cap**           | No cap (bounded by file size)                               | 50,000 datums per series (`MAX_CURRENT_DATUMS_PER_SERIES`) |
+| **On seek (file)**| Reloaded from range source                                  | Reset to `[]`                                              |
+| **On seek (WS)**  | N/A                                                         | **Kept** — data cannot be reloaded                         |
+
+**`#hasRangeSource` flag controls the flow:**
+- When `false` (WebSocket): every `handlePlayerState()` call extracts data points from `currentFrame` → dispatched as `append-current` to Worker → Worker accumulates in `series.current[]`
+- When `true` (file/MCAP): `handleMessageRange()` provides full history via `append-full` → `series.full[]`; `currentFrame` is skipped
+
+**Overflow handling:** When `series.current[]` exceeds 50,000 datums, the oldest 25% + excess are culled via `splice(0, cullSize + 12,500)`, creating a sliding window effect.
+
+#### Comparison: File vs WebSocket — Buffering Architecture
+
+```mermaid
+flowchart LR
+    subgraph FilePipeline["📁 File-Based Pipeline"]
+        direction TB
+        F1["McapWorker<br/>(reads chunks)"]
+        F2["CachingIterableSource<br/>(600MB LRU cache)"]
+        F3["BufferedIterableSource<br/>(120s read-ahead)"]
+        F4["BlockLoader<br/>(preload for allFrames)"]
+        F5["IterablePlayer<br/>(tick loop)"]
+
+        F1 --> F2 --> F3 --> F5
+        F2 --> F4 --> F5
+    end
+
+    subgraph WSPipeline["📡 WebSocket Pipeline"]
+        direction TB
+        W1["WorkerSocketAdapter<br/>(socket I/O only)"]
+        W2["FoxgloveClient<br/>(ws-protocol framing — Main Thread)"]
+        W3["FoxgloveWebSocketPlayer<br/>(deserialize — Main Thread ⚠️)"]
+        W4["parsedMessages[]<br/>(transient, drained each emit)"]
+        W5["❌ No centralized cache"]
+
+        W1 --> W2 --> W3 --> W4
+        W4 -.->|"No equivalent"| W5
+    end
+
+    subgraph PanelAccumulation["🖥️ Panel-Level Accumulation"]
+        direction TB
+        PA1["Plot: series.current[]<br/>(50k datums/series in Worker)"]
+        PA2["3D: TF tree + latest msg/topic"]
+        PA3["Log: virtualized buffer"]
+    end
+
+    FilePipeline -->|"allFrames +<br/>currentFrame"| PanelAccumulation
+    WSPipeline -->|"currentFrame ONLY"| PanelAccumulation
+
+    style FilePipeline fill:#e8f5e9
+    style WSPipeline fill:#fff3e0
+    style PanelAccumulation fill:#e3f2fd
+```
+
+#### Critical Numbers — WebSocket Buffering
+
+| Constant                           | Value           | Location                               |
+| ---------------------------------- | --------------- | -------------------------------------- |
+| `CURRENT_FRAME_MAXIMUM_SIZE_BYTES` | 400MB           | `FoxgloveWebSocketPlayer/constants.ts` |
+| Eviction target                    | 80% (320MB)     | `FoxgloveWebSocketPlayer/index.ts`     |
+| `MAX_CURRENT_DATUMS_PER_SERIES`    | 50,000          | `TimestampDatasetsBuilderImpl.ts`      |
+| Cull overshoot                     | 25% extra       | `TimestampDatasetsBuilderImpl.ts`      |
+| `emitState()` debounce             | Promise-based   | `FoxgloveWebSocketPlayer/index.ts`     |
+| `allFrames` support                | ❌ Not available | WebSocket player has no `messageCache` |
+
+#### Performance Implications — WebSocket vs File
+
+| Aspect                         | File-Based                                   | WebSocket                                     |
+| ------------------------------ | -------------------------------------------- | --------------------------------------------- |
+| **Historical data**            | Full history via `allFrames` + `BlockLoader`  | None — panels accumulate from `currentFrame`  |
+| **Seek**                       | Random access via chunk index                | N/A (live only)                               |
+| **Memory management**          | Centralized (CachingIterableSource 600MB)    | Distributed (each panel manages own)          |
+| **Memory pressure visibility** | Single cache size to monitor                 | Harder to track — spread across panels        |
+| **Plot full history**          | `series.full[]` from range source            | `series.current[]` only (50k cap)             |
+| **Data loss on tab inactive**  | None (reads from file on demand)             | Messages dropped if > 400MB queue             |
+| **GC pressure**                | Batch-based (17ms tick windows)              | Continuous (each WS message creates objects)  |
+| **Deserialization thread**     | Worker thread (via Comlink)                  | ⚠️ Main thread (blocks UI)                    |
+
 ---
 
 ## 3. MCAP — Structure and Reading
@@ -1561,6 +1784,357 @@ If the script takes 5ms per execution → 500ms/s spent on scripts
 
 ---
 
+## 9B. Extensions — Performance Risks and Mitigations
+
+Extensions are a powerful customization mechanism in Lichtblick, allowing users to register custom panels, message converters, topic alias functions, and camera models. However, **extensions run unsandboxed on the main thread** and have significant potential to degrade application performance.
+
+### 9B.1 Extension Execution Model
+
+```mermaid
+flowchart TB
+    subgraph Loading["📦 Extension Loading (once)"]
+        direction TB
+        L1["IExtensionLoader.loadExtension(id)"]
+        L2["new Function('module', 'require', source)<br/>⚠️ eval-like, NO sandbox"]
+        L3["module.exports.activate(ctx)"]
+        L4["Register: panels, converters,<br/>topic aliases, camera models"]
+        L1 --> L2 --> L3 --> L4
+    end
+
+    subgraph Runtime["⚡ Runtime Execution (per frame)"]
+        direction TB
+        subgraph PanelExt["Extension Panel"]
+            P1["onRender(renderState, done)<br/>called every frame at 60fps"]
+            P2["Panel DOM manipulation<br/>(direct access to panelElement)"]
+        end
+
+        subgraph ConverterExt["Message Converter"]
+            C1["converter(msg, event, vars, ctx)<br/>called per message per frame"]
+            C2["Synchronous, blocks main thread"]
+            C3["Output feeds into panel rendering"]
+        end
+
+        subgraph AliasExt["Topic Alias Function"]
+            A1["aliasFunction({topics, vars})<br/>called on every state change"]
+        end
+
+        subgraph CameraExt["Camera Model"]
+            CM1["modelBuilder(cameraInfo)<br/>called during 3D rendering"]
+        end
+    end
+
+    Loading --> Runtime
+
+    style Loading fill:#e3f2fd
+    style Runtime fill:#ffcdd2
+    style PanelExt fill:#fff9c4
+    style ConverterExt fill:#ffcdd2
+    style AliasExt fill:#fff3e0
+    style CameraExt fill:#f3e5f5
+```
+
+**Key code path** — Extension code is loaded via `new Function()` in `buildContributionPoints.ts`:
+
+```typescript
+// packages/suite-base/src/providers/helpers/buildContributionPoints.ts
+const fn = new Function("module", "require", unwrappedExtensionSource);
+fn(module, require, {});
+const wrappedExtensionModule = module.exports as ExtensionModule;
+wrappedExtensionModule.activate(ctx);
+```
+
+There is no iframe, Web Worker, or any sandboxing mechanism. Extension code runs **directly on the main thread** with full access to the JavaScript environment.
+
+### 9B.2 Extension Types and Performance Impact
+
+| Extension Type        | When it Runs                           | Frequency                             | Blocks Main Thread          | Risk Level |
+| --------------------- | -------------------------------------- | ------------------------------------- | --------------------------- | ---------- |
+| **Panel**             | `onRender()` callback                  | Every frame (60fps)                   | Yes (until `done()` called) | 🔴 High    |
+| **Message Converter** | `converter()` per message              | Per message × per topic × per frame   | Yes (synchronous)           | 🔴 High    |
+| **Topic Alias**       | On player state change / topic change  | On each `emitState()`                 | Yes (synchronous)           | 🟡 Medium  |
+| **Camera Model**      | During 3D panel rendering              | Per camera per frame                  | Yes (synchronous)           | 🟡 Medium  |
+
+### 9B.3 How Extensions Can Degrade Performance
+
+#### A. Message Converters — The Biggest Risk
+
+Message converters are the most dangerous performance vector because they execute **synchronously, per message, on the main thread**, with no timeout or CPU budget.
+
+```mermaid
+sequenceDiagram
+    participant Pipeline as MessagePipeline
+    participant RenderState as buildRenderState()
+    participant Converter as Extension Converter
+    participant Panel as Panel onRender
+
+    Pipeline->>RenderState: New frame (N messages)
+    loop For each message in currentFrame
+        RenderState->>Converter: converter(msg, event, vars)
+        Note over Converter: ⚠️ NO timeout<br/>⚠️ NO CPU budget<br/>⚠️ Blocks main thread
+        Converter-->>RenderState: converted message
+    end
+    RenderState->>Panel: renderState with converted messages
+    Panel-->>Pipeline: done()
+```
+
+**Problematic scenario:**
+
+```
+Extension registers converter: sensor_msgs/PointCloud2 → CustomViz
+Topic /lidar at 100Hz (100 messages/sec)
+Converter does: deep clone + field computation + JSON.stringify
+
+If converter takes 5ms per message:
+→ 100 msgs/sec × 5ms = 500ms/sec spent ONLY in converter
+→ Only 500ms remaining for everything else (rendering, React, other panels)
+→ At 60fps (16.6ms budget): converter alone takes 30% of EVERY frame
+```
+
+**Current protection** — only catches thrown exceptions, NOT performance issues:
+
+```typescript
+// messageProcessing.ts — convertMessage()
+try {
+  const convertedMessage = converter.converter(msg, event, globalVariables, context);
+} catch (e) {
+  // Only catches exceptions — an infinite loop will freeze the app FOREVER
+  emitAlert({ severity: "error", message: "Uncaught error in message converter" });
+}
+```
+
+#### B. Panel Extensions — Blocking the Frame Pipeline
+
+Panel `onRender()` callbacks receive a `done` callback that must be called when rendering completes. The `pauseFrame` mechanism blocks the **entire message pipeline** until all panels call `done()`.
+
+```mermaid
+flowchart TB
+    subgraph FrameCycle["Frame Cycle"]
+        direction TB
+        Emit["Player emitState()"]
+        Pause["pauseFrame() — waits for ALL panels"]
+        Render1["Panel A: onRender → done() ✅ (2ms)"]
+        Render2["Panel B: onRender → done() ✅ (5ms)"]
+        Render3["Extension Panel: onRender → ⏳ (200ms)"]
+        Timeout["MAX_PROMISE_TIMEOUT_TIME_MS = 5000ms<br/>⚠️ Pipeline stalled for up to 5 seconds!"]
+        Resume["Pipeline resumes"]
+
+        Emit --> Pause
+        Pause --> Render1
+        Pause --> Render2
+        Pause --> Render3
+        Render3 -->|"Slow extension"| Timeout
+        Timeout --> Resume
+    end
+
+    style FrameCycle fill:#fff3e0
+    style Timeout fill:#ffcdd2
+```
+
+**Current safeguards:**
+- `MAX_PROMISE_TIMEOUT_TIME_MS = 5000ms` — after 5 seconds the pipeline continues without the panel
+- `slowRender` flag — sets an orange border on panels that can't keep up (visual only)
+- Error boundary — catches `throw` in render, shows error UI
+
+**What's NOT protected:**
+- Synchronous blocking in `onRender` before calling `done()` — no way to interrupt
+- Heavy DOM manipulation that triggers forced layout/reflow
+- Infinite loops (freeze entire application with no recovery)
+
+#### C. Extension-Triggered Over-Subscription
+
+Extensions can subscribe to **any number of topics** with `preload: true`, forcing the application to deserialize and cache all messages for those topics.
+
+```typescript
+// A poorly-written extension that subscribes to everything
+context.subscribe(
+  topics.map(t => ({ topic: t.name, preload: true }))
+);
+```
+
+**Impact:** Forces `allFrames` processing for ALL topics → massive memory consumption + CPU load from iterating all preload blocks per frame.
+
+#### D. Memory Leaks from Extensions
+
+Extensions have direct access to the DOM (`panelElement`) and can create event listeners, closures, timers, and objects that persist beyond the panel lifecycle if not cleaned up properly.
+
+```typescript
+// Extension that leaks — no cleanup on unmount
+initPanel(context) {
+  const data = [];  // grows unbounded
+  context.onRender = (state, done) => {
+    data.push(...state.currentFrame);  // never cleared!
+    done();
+  };
+  // Missing: return () => { /* cleanup */ }
+}
+```
+
+### 9B.4 Current Safeguards — Summary
+
+| Safeguard                               | What it Protects                | Limitation                                                       |
+| --------------------------------------- | ------------------------------- | ---------------------------------------------------------------- |
+| `try/catch` on `converter()`            | Catches thrown exceptions       | Does NOT protect against infinite loops or slow code              |
+| `MAX_PROMISE_TIMEOUT_TIME_MS` (5000ms)  | Prevents permanent pipeline stall | 5 seconds is far too long — causes massive perceived lag        |
+| `slowRender` indicator (orange border)  | Visual feedback to user         | Purely informational, no throttling or disabling                  |
+| Error boundary                          | Catches panel render crashes    | Does NOT handle OOM or frozen panels                             |
+| `sampling: "latest-per-render-tick"`    | Reduces message delivery freq   | Only if converter explicitly opts in (`supportsLatestPerRenderTick`) |
+| Error alert system                      | Notifies user of converter errors | No automatic disabling of problematic extensions                |
+
+### 9B.5 Proposed Mitigations
+
+```mermaid
+flowchart TB
+    subgraph ShortTerm["🟢 Short-Term (Low Complexity)"]
+        S1["Converter time tracking<br/>(performance.now() before/after)"]
+        S2["Auto-disable slow converter<br/>(after N budget violations)"]
+        S3["Subscription budget per extension<br/>(max topics, max preload)"]
+        S4["Reduce pauseFrame timeout<br/>(5000ms → 500ms)"]
+        S5["Warning UI for slow extensions<br/>(show ms/frame in panel toolbar)"]
+    end
+
+    subgraph MediumTerm["🟡 Medium-Term (Medium Complexity)"]
+        M1["Message converter in Worker<br/>(isolate from main thread)"]
+        M2["Converter result caching<br/>(skip re-conversion for same input)"]
+        M3["Extension CPU budget<br/>(throttle if exceeding budget)"]
+        M4["Lazy converter invocation<br/>(only convert when panel visible)"]
+        M5["Extension profiling dashboard<br/>(per-extension metrics in UI)"]
+    end
+
+    subgraph LongTerm["🔴 Long-Term (High Complexity)"]
+        L1["Extension sandboxing via iframe<br/>(full memory + CPU isolation)"]
+        L2["Extension Workers<br/>(each extension in own Worker)"]
+        L3["WASM-based extension runtime<br/>(deterministic execution, limits)"]
+        L4["Extension review + certification<br/>(performance benchmarks)"]
+    end
+
+    style ShortTerm fill:#e8f5e9
+    style MediumTerm fill:#fff9c4
+    style LongTerm fill:#ffcdd2
+```
+
+#### Detailed Strategies
+
+##### 1. Converter Time Tracking + Auto-Disable (Short-Term)
+
+```typescript
+// Proposed enhancement to convertMessage() in messageProcessing.ts
+const start = performance.now();
+const convertedMessage = converter.converter(msg, event, globalVariables, context);
+const elapsed = performance.now() - start;
+
+if (elapsed > CONVERTER_BUDGET_MS) {  // e.g., 2ms per message
+  converterViolations.increment(converter.extensionId);
+  if (converterViolations.get(converter.extensionId) > MAX_VIOLATIONS) {
+    disableConverter(converter.extensionId);
+    emitAlert({
+      severity: "error",
+      message: `Converter from ${converter.extensionId} auto-disabled: exceeded ${CONVERTER_BUDGET_MS}ms budget ${MAX_VIOLATIONS} times`,
+    });
+  }
+}
+```
+
+**Limitation:** Cannot interrupt a synchronous converter mid-execution. Only detects and disables after repeated violations.
+
+##### 2. Message Converter in Worker (Medium-Term)
+
+Move converter execution to a dedicated Worker with timeout and kill capability:
+
+```mermaid
+sequenceDiagram
+    participant Main as Main Thread
+    participant Worker as Converter Worker
+    participant Ext as Extension Converter Code
+
+    Main->>Worker: Comlink: convertBatch(messages, converterCode)
+    Worker->>Ext: converter(msg1)
+    Ext-->>Worker: result1
+    Worker->>Ext: converter(msg2)
+    Ext-->>Worker: result2
+    Worker-->>Main: Comlink.transfer(convertedMessages)
+
+    Note over Main: If Worker takes > 16ms:
+    Main->>Worker: terminate() + restart
+    Main-->>Main: Skip conversion, show alert
+```
+
+**Advantages:**
+- True isolation — a frozen converter doesn't block the main thread
+- Can be killed and restarted (Worker termination is instant)
+- CPU budget enforceable via Worker round-trip timing
+- Follows existing pattern: Plot panel uses Comlink Workers for data processing
+
+**Challenges:**
+- Message data must be cloned/transferred to Worker (structured clone cost)
+- Converter code must be serializable (no closures over panel state)
+- Converter `context` (globalVariables, emitAlert) must be proxied across thread boundary
+
+##### 3. Extension Subscription Budget (Short-Term)
+
+| Budget Parameter              | Default Limit | Configurable |
+| ----------------------------- | ------------- | ------------ |
+| Max subscribed topics         | 20            | Yes          |
+| Max preload topics            | 5             | Yes          |
+| Max message rate per panel    | 1000 msgs/sec | Yes          |
+| Max frame processing time     | 8ms (50%)     | No           |
+
+##### 4. Extension Profiling Dashboard (Medium-Term)
+
+| Metric                       | What it Measures                    | Warning Threshold |
+| ---------------------------- | ----------------------------------- | ----------------- |
+| `converter.avgMs`            | Average converter execution time    | > 1ms             |
+| `panel.renderMs`             | Time in onRender per frame          | > 8ms             |
+| `panel.skipCount`            | Frames where panel couldn't keep up | > 10%             |
+| `extension.memoryDelta`      | Memory growth attributed to ext     | > 50MB            |
+| `extension.subscriptionCount`| Number of topics subscribed         | > 20              |
+
+### 9B.6 Architecture Comparison — Current vs Proposed
+
+```mermaid
+flowchart LR
+    subgraph Current["Current: No Isolation"]
+        direction TB
+        MainThread1["Main Thread"]
+        App1["Lichtblick Core"]
+        Ext1["Extension A<br/>(converter)"]
+        Ext2["Extension B<br/>(panel)"]
+        Ext3["Extension C<br/>(converter)"]
+
+        MainThread1 --> App1
+        MainThread1 --> Ext1
+        MainThread1 --> Ext2
+        MainThread1 --> Ext3
+    end
+
+    subgraph Proposed["Proposed: Tiered Isolation"]
+        direction TB
+        MainThread2["Main Thread"]
+        App2["Lichtblick Core"]
+        PanelExt["Panel Extensions<br/>(main thread, budgeted)"]
+        ConvWorker["Converter Worker<br/>(isolated, killable)"]
+        AliasCalc["Alias Functions<br/>(main thread, cached)"]
+
+        MainThread2 --> App2
+        MainThread2 --> PanelExt
+        ConvWorker -.->|"transfer results"| MainThread2
+        MainThread2 --> AliasCalc
+    end
+
+    style Current fill:#ffcdd2
+    style Proposed fill:#e8f5e9
+```
+
+### 9B.7 Key Takeaways
+
+1. **Extensions run unsandboxed** — `new Function()` executes extension code directly on the main thread with full access to the JS environment
+2. **Message converters are the highest risk** — they execute synchronously per-message with no timeout or budget, and a slow converter compounds linearly with topic frequency
+3. **The 5-second `pauseFrame` timeout is too generous** — at 60fps, even 100ms of blocking causes visible jank; the timeout should be reduced to ~500ms
+4. **No automatic disabling mechanism exists** — a misbehaving extension continues degrading performance until manually uninstalled
+5. **Extension over-subscription** can force the pipeline to process far more data than necessary, contributing to memory pressure and OOM
+6. **Worker isolation for converters** is the recommended medium-term strategy — it provides true CPU isolation with kill capability, follows the existing Comlink pattern in the codebase, and doesn't require changes to the extension API surface
+
+---
+
 ## 10. Problem and Solution Matrix
 
 ### 10.1 Problems by Layer
@@ -1619,6 +2193,9 @@ flowchart LR
 | 14  | Slow remote file seek               | Remote I/O   | HTTP range request + network latency                 | Network tab, cache hit ratio                     | 500MB CachedFilelike                         | Predictive prefetch                                                                                                |
 | 15  | 3D panel blocks React UI            | Rendering    | THREE.js render loop on main thread (8-20ms/frame)   | Performance profiler (long tasks)                | None                                         | **THREE.js → OffscreenCanvas Worker** (see 5.6 #3)                                                                 |
 | 16  | Live WS jank with many topics       | WebSocket    | `deserialize()` runs on main thread per message      | Profiler: `deserialize` in flame chart           | `WorkerSocketAdapter` (I/O only)             | **Move deserialization into Worker** (see 5.6 #2)                                                                  |
+| 17  | Extension converter freezes UI      | Extensions   | Slow/infinite converter blocks main thread           | Profiler: long `convertMessage` task             | `try/catch` (exceptions only)                | **Converter time tracking + auto-disable** (see 9B.5 #1), **Converter Worker** (see 9B.5 #2)                       |
+| 18  | Extension over-subscription         | Extensions   | Extension subscribes all topics with `preload: true` | Memory profiler: growing `allFrames`             | None                                         | **Subscription budget per extension** (see 9B.5 #3)                                                                |
+| 19  | Slow extension panel blocks pipeline| Extensions   | Panel `onRender` takes >5s, stalls `pauseFrame`      | Pipeline freeze after frame delivery             | 5000ms timeout (too generous)                | **Reduce timeout to ~500ms**, auto-disable slow panels (see 9B.5)                                                  |
 
 ### 10.3 Prioritization by Impact
 
@@ -1634,6 +2211,8 @@ flowchart LR
 | 🟢 Low    | Image decode           | Low-Medium  | Medium-High |
 | 🟢 Low    | RawMsg jank            | Low         | Medium      |
 | 🟢 Low    | Remote seek            | Medium-Low  | Low         |
+| 🔴 High   | Extension converter freeze | High    | Medium      |
+| 🟡 Medium | Extension over-subscription | Medium | Medium-Low  |
 
 ---
 
