@@ -222,6 +222,7 @@ sequenceDiagram
 ```
 
 **Key behaviors:**
+
 - **Deserialization on Main Thread:** Both ws-protocol framing (`parseServerMessage`) and schema deserialization (`parsedChannel.deserialize`) run on the main thread. The Worker only handles raw socket I/O
 - **Debounced emit:** Multiple messages accumulate into a single batch before `emitState()` fires
 - **Drain on emit:** `parsedMessages` is reset to `[]` — no historical retention at the player level
@@ -277,14 +278,14 @@ flowchart TB
 
 #### How Each Panel Handles WebSocket Data
 
-| Panel                  | Accumulation Strategy                                                     | Data Retention                     | Memory Growth         |
-| ---------------------- | ------------------------------------------------------------------------- | ---------------------------------- | --------------------- |
-| **Plot**               | `append-current` action → Worker accumulates datums in `series.current[]` | 50,000 datums/series (then culled) | Bounded (Worker heap) |
-| **3D (ThreeDee)**      | Latest message per topic; transform tree grows; decay keeps history       | Unbounded TF tree + decay limit    | Can grow significantly |
-| **Raw Messages**       | Shows latest message only, no history                                     | 1 message                          | Minimal               |
-| **Image**              | Shows latest image, no history                                            | 1 decoded image                    | Minimal               |
-| **Log**                | Appends log entries to virtualized list                                   | Configurable buffer                | Moderate              |
-| **State Transitions**  | Accumulates state history                                                 | Session duration                   | Can grow              |
+| Panel                 | Accumulation Strategy                                                     | Data Retention                     | Memory Growth          |
+| --------------------- | ------------------------------------------------------------------------- | ---------------------------------- | ---------------------- |
+| **Plot**              | `append-current` action → Worker accumulates datums in `series.current[]` | 50,000 datums/series (then culled) | Bounded (Worker heap)  |
+| **3D (ThreeDee)**     | Latest message per topic; transform tree grows; decay keeps history       | Unbounded TF tree + decay limit    | Can grow significantly |
+| **Raw Messages**      | Shows latest message only, no history                                     | 1 message                          | Minimal                |
+| **Image**             | Shows latest image, no history                                            | 1 decoded image                    | Minimal                |
+| **Log**               | Appends log entries to virtualized list                                   | Configurable buffer                | Moderate               |
+| **State Transitions** | Accumulates state history                                                 | Session duration                   | Can grow               |
 
 #### Deep Dive: Plot Panel with WebSocket Data
 
@@ -319,16 +320,17 @@ sequenceDiagram
 
 **Key distinction — `series.full[]` vs `series.current[]`:**
 
-| Property          | `series.full[]`                                             | `series.current[]`                                         |
-| ----------------- | ----------------------------------------------------------- | ---------------------------------------------------------- |
-| **Populated by**  | `handleMessageRange()` via `unstable_subscribeMessageRange` | `handlePlayerState()` via `currentFrame`                   |
-| **Data source**   | File-based range source (preloaded history)                 | Live `currentFrame` batches                                |
-| **WebSocket**     | **Empty** — no range source available                       | **Only data source** — all accumulated datums              |
-| **Cap**           | No cap (bounded by file size)                               | 50,000 datums per series (`MAX_CURRENT_DATUMS_PER_SERIES`) |
-| **On seek (file)**| Reloaded from range source                                  | Reset to `[]`                                              |
-| **On seek (WS)**  | N/A                                                         | **Kept** — data cannot be reloaded                         |
+| Property           | `series.full[]`                                             | `series.current[]`                                         |
+| ------------------ | ----------------------------------------------------------- | ---------------------------------------------------------- |
+| **Populated by**   | `handleMessageRange()` via `unstable_subscribeMessageRange` | `handlePlayerState()` via `currentFrame`                   |
+| **Data source**    | File-based range source (preloaded history)                 | Live `currentFrame` batches                                |
+| **WebSocket**      | **Empty** — no range source available                       | **Only data source** — all accumulated datums              |
+| **Cap**            | No cap (bounded by file size)                               | 50,000 datums per series (`MAX_CURRENT_DATUMS_PER_SERIES`) |
+| **On seek (file)** | Reloaded from range source                                  | Reset to `[]`                                              |
+| **On seek (WS)**   | N/A                                                         | **Kept** — data cannot be reloaded                         |
 
 **`#hasRangeSource` flag controls the flow:**
+
 - When `false` (WebSocket): every `handlePlayerState()` call extracts data points from `currentFrame` → dispatched as `append-current` to Worker → Worker accumulates in `series.current[]`
 - When `true` (file/MCAP): `handleMessageRange()` provides full history via `append-full` → `series.full[]`; `currentFrame` is skipped
 
@@ -379,27 +381,27 @@ flowchart LR
 
 #### Critical Numbers — WebSocket Buffering
 
-| Constant                           | Value           | Location                               |
-| ---------------------------------- | --------------- | -------------------------------------- |
-| `CURRENT_FRAME_MAXIMUM_SIZE_BYTES` | 400MB           | `FoxgloveWebSocketPlayer/constants.ts` |
-| Eviction target                    | 80% (320MB)     | `FoxgloveWebSocketPlayer/index.ts`     |
-| `MAX_CURRENT_DATUMS_PER_SERIES`    | 50,000          | `TimestampDatasetsBuilderImpl.ts`      |
-| Cull overshoot                     | 25% extra       | `TimestampDatasetsBuilderImpl.ts`      |
-| `emitState()` debounce             | Promise-based   | `FoxgloveWebSocketPlayer/index.ts`     |
+| Constant                           | Value            | Location                               |
+| ---------------------------------- | ---------------- | -------------------------------------- |
+| `CURRENT_FRAME_MAXIMUM_SIZE_BYTES` | 400MB            | `FoxgloveWebSocketPlayer/constants.ts` |
+| Eviction target                    | 80% (320MB)      | `FoxgloveWebSocketPlayer/index.ts`     |
+| `MAX_CURRENT_DATUMS_PER_SERIES`    | 50,000           | `TimestampDatasetsBuilderImpl.ts`      |
+| Cull overshoot                     | 25% extra        | `TimestampDatasetsBuilderImpl.ts`      |
+| `emitState()` debounce             | Promise-based    | `FoxgloveWebSocketPlayer/index.ts`     |
 | `allFrames` support                | ❌ Not available | WebSocket player has no `messageCache` |
 
 #### Performance Implications — WebSocket vs File
 
-| Aspect                         | File-Based                                   | WebSocket                                     |
-| ------------------------------ | -------------------------------------------- | --------------------------------------------- |
-| **Historical data**            | Full history via `allFrames` + `BlockLoader`  | None — panels accumulate from `currentFrame`  |
-| **Seek**                       | Random access via chunk index                | N/A (live only)                               |
-| **Memory management**          | Centralized (CachingIterableSource 600MB)    | Distributed (each panel manages own)          |
-| **Memory pressure visibility** | Single cache size to monitor                 | Harder to track — spread across panels        |
-| **Plot full history**          | `series.full[]` from range source            | `series.current[]` only (50k cap)             |
-| **Data loss on tab inactive**  | None (reads from file on demand)             | Messages dropped if > 400MB queue             |
-| **GC pressure**                | Batch-based (17ms tick windows)              | Continuous (each WS message creates objects)  |
-| **Deserialization thread**     | Worker thread (via Comlink)                  | ⚠️ Main thread (blocks UI)                    |
+| Aspect                         | File-Based                                   | WebSocket                                    |
+| ------------------------------ | -------------------------------------------- | -------------------------------------------- |
+| **Historical data**            | Full history via `allFrames` + `BlockLoader` | None — panels accumulate from `currentFrame` |
+| **Seek**                       | Random access via chunk index                | N/A (live only)                              |
+| **Memory management**          | Centralized (CachingIterableSource 600MB)    | Distributed (each panel manages own)         |
+| **Memory pressure visibility** | Single cache size to monitor                 | Harder to track — spread across panels       |
+| **Plot full history**          | `series.full[]` from range source            | `series.current[]` only (50k cap)            |
+| **Data loss on tab inactive**  | None (reads from file on demand)             | Messages dropped if > 400MB queue            |
+| **GC pressure**                | Batch-based (17ms tick windows)              | Continuous (each WS message creates objects) |
+| **Deserialization thread**     | Worker thread (via Comlink)                  | ⚠️ Main thread (blocks UI)                   |
 
 ---
 
@@ -1847,12 +1849,12 @@ There is no iframe, Web Worker, or any sandboxing mechanism. Extension code runs
 
 ### 9B.2 Extension Types and Performance Impact
 
-| Extension Type        | When it Runs                           | Frequency                             | Blocks Main Thread          | Risk Level |
-| --------------------- | -------------------------------------- | ------------------------------------- | --------------------------- | ---------- |
-| **Panel**             | `onRender()` callback                  | Every frame (60fps)                   | Yes (until `done()` called) | 🔴 High    |
-| **Message Converter** | `converter()` per message              | Per message × per topic × per frame   | Yes (synchronous)           | 🔴 High    |
-| **Topic Alias**       | On player state change / topic change  | On each `emitState()`                 | Yes (synchronous)           | 🟡 Medium  |
-| **Camera Model**      | During 3D panel rendering              | Per camera per frame                  | Yes (synchronous)           | 🟡 Medium  |
+| Extension Type        | When it Runs                          | Frequency                           | Blocks Main Thread          | Risk Level |
+| --------------------- | ------------------------------------- | ----------------------------------- | --------------------------- | ---------- |
+| **Panel**             | `onRender()` callback                 | Every frame (60fps)                 | Yes (until `done()` called) | 🔴 High    |
+| **Message Converter** | `converter()` per message             | Per message × per topic × per frame | Yes (synchronous)           | 🔴 High    |
+| **Topic Alias**       | On player state change / topic change | On each `emitState()`               | Yes (synchronous)           | 🟡 Medium  |
+| **Camera Model**      | During 3D panel rendering             | Per camera per frame                | Yes (synchronous)           | 🟡 Medium  |
 
 ### 9B.3 How Extensions Can Degrade Performance
 
@@ -1931,11 +1933,13 @@ flowchart TB
 ```
 
 **Current safeguards:**
+
 - `MAX_PROMISE_TIMEOUT_TIME_MS = 5000ms` — after 5 seconds the pipeline continues without the panel
 - `slowRender` flag — sets an orange border on panels that can't keep up (visual only)
 - Error boundary — catches `throw` in render, shows error UI
 
 **What's NOT protected:**
+
 - Synchronous blocking in `onRender` before calling `done()` — no way to interrupt
 - Heavy DOM manipulation that triggers forced layout/reflow
 - Infinite loops (freeze entire application with no recovery)
@@ -1946,9 +1950,7 @@ Extensions can subscribe to **any number of topics** with `preload: true`, forci
 
 ```typescript
 // A poorly-written extension that subscribes to everything
-context.subscribe(
-  topics.map(t => ({ topic: t.name, preload: true }))
-);
+context.subscribe(topics.map((t) => ({ topic: t.name, preload: true })));
 ```
 
 **Impact:** Forces `allFrames` processing for ALL topics → massive memory consumption + CPU load from iterating all preload blocks per frame.
@@ -1971,14 +1973,14 @@ initPanel(context) {
 
 ### 9B.4 Current Safeguards — Summary
 
-| Safeguard                               | What it Protects                | Limitation                                                       |
-| --------------------------------------- | ------------------------------- | ---------------------------------------------------------------- |
-| `try/catch` on `converter()`            | Catches thrown exceptions       | Does NOT protect against infinite loops or slow code              |
-| `MAX_PROMISE_TIMEOUT_TIME_MS` (5000ms)  | Prevents permanent pipeline stall | 5 seconds is far too long — causes massive perceived lag        |
-| `slowRender` indicator (orange border)  | Visual feedback to user         | Purely informational, no throttling or disabling                  |
-| Error boundary                          | Catches panel render crashes    | Does NOT handle OOM or frozen panels                             |
-| `sampling: "latest-per-render-tick"`    | Reduces message delivery freq   | Only if converter explicitly opts in (`supportsLatestPerRenderTick`) |
-| Error alert system                      | Notifies user of converter errors | No automatic disabling of problematic extensions                |
+| Safeguard                              | What it Protects                  | Limitation                                                           |
+| -------------------------------------- | --------------------------------- | -------------------------------------------------------------------- |
+| `try/catch` on `converter()`           | Catches thrown exceptions         | Does NOT protect against infinite loops or slow code                 |
+| `MAX_PROMISE_TIMEOUT_TIME_MS` (5000ms) | Prevents permanent pipeline stall | 5 seconds is far too long — causes massive perceived lag             |
+| `slowRender` indicator (orange border) | Visual feedback to user           | Purely informational, no throttling or disabling                     |
+| Error boundary                         | Catches panel render crashes      | Does NOT handle OOM or frozen panels                                 |
+| `sampling: "latest-per-render-tick"`   | Reduces message delivery freq     | Only if converter explicitly opts in (`supportsLatestPerRenderTick`) |
+| Error alert system                     | Notifies user of converter errors | No automatic disabling of problematic extensions                     |
 
 ### 9B.5 Proposed Mitigations
 
@@ -2022,7 +2024,8 @@ const start = performance.now();
 const convertedMessage = converter.converter(msg, event, globalVariables, context);
 const elapsed = performance.now() - start;
 
-if (elapsed > CONVERTER_BUDGET_MS) {  // e.g., 2ms per message
+if (elapsed > CONVERTER_BUDGET_MS) {
+  // e.g., 2ms per message
   converterViolations.increment(converter.extensionId);
   if (converterViolations.get(converter.extensionId) > MAX_VIOLATIONS) {
     disableConverter(converter.extensionId);
@@ -2059,34 +2062,36 @@ sequenceDiagram
 ```
 
 **Advantages:**
+
 - True isolation — a frozen converter doesn't block the main thread
 - Can be killed and restarted (Worker termination is instant)
 - CPU budget enforceable via Worker round-trip timing
 - Follows existing pattern: Plot panel uses Comlink Workers for data processing
 
 **Challenges:**
+
 - Message data must be cloned/transferred to Worker (structured clone cost)
 - Converter code must be serializable (no closures over panel state)
 - Converter `context` (globalVariables, emitAlert) must be proxied across thread boundary
 
 ##### 3. Extension Subscription Budget (Short-Term)
 
-| Budget Parameter              | Default Limit | Configurable |
-| ----------------------------- | ------------- | ------------ |
-| Max subscribed topics         | 20            | Yes          |
-| Max preload topics            | 5             | Yes          |
-| Max message rate per panel    | 1000 msgs/sec | Yes          |
-| Max frame processing time     | 8ms (50%)     | No           |
+| Budget Parameter           | Default Limit | Configurable |
+| -------------------------- | ------------- | ------------ |
+| Max subscribed topics      | 20            | Yes          |
+| Max preload topics         | 5             | Yes          |
+| Max message rate per panel | 1000 msgs/sec | Yes          |
+| Max frame processing time  | 8ms (50%)     | No           |
 
 ##### 4. Extension Profiling Dashboard (Medium-Term)
 
-| Metric                       | What it Measures                    | Warning Threshold |
-| ---------------------------- | ----------------------------------- | ----------------- |
-| `converter.avgMs`            | Average converter execution time    | > 1ms             |
-| `panel.renderMs`             | Time in onRender per frame          | > 8ms             |
-| `panel.skipCount`            | Frames where panel couldn't keep up | > 10%             |
-| `extension.memoryDelta`      | Memory growth attributed to ext     | > 50MB            |
-| `extension.subscriptionCount`| Number of topics subscribed         | > 20              |
+| Metric                        | What it Measures                    | Warning Threshold |
+| ----------------------------- | ----------------------------------- | ----------------- |
+| `converter.avgMs`             | Average converter execution time    | > 1ms             |
+| `panel.renderMs`              | Time in onRender per frame          | > 8ms             |
+| `panel.skipCount`             | Frames where panel couldn't keep up | > 10%             |
+| `extension.memoryDelta`       | Memory growth attributed to ext     | > 50MB            |
+| `extension.subscriptionCount` | Number of topics subscribed         | > 20              |
 
 ### 9B.6 Architecture Comparison — Current vs Proposed
 
@@ -2175,44 +2180,44 @@ flowchart LR
 
 ### 10.2 Complete Diagnostic Table
 
-| #   | Symptom                             | Layer        | Root Cause                                           | Diagnosis                                        | Existing Solution                            | Possible Improvement                                                                                               |
-| --- | ----------------------------------- | ------------ | ---------------------------------------------------- | ------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
-| 1   | App freezes when opening large MCAP | MCAP Reading | Unindexed file trying to load everything into memory | Check if MCAP has summary section                | 1GB limit for unindexed                      | Partial streaming for unindexed                                                                                    |
-| 2   | Slow initialization (>10s)          | MCAP Reading | Too many chunk indexes to parse                      | Measure time in `McapIndexedReader.Initialize()` | Preload decompressHandlers                   | Index caching between sessions                                                                                     |
-| 3   | Choppy playback                     | Player Tick  | Too many messages in 300ms tick window               | Count msgs/tick in debug                         | 300ms cap + EMA smoothing                    | Adaptive tick window, message sampling, WASM deserialization for complex schemas (⚠️ high boundary cost — see 5.5) |
-| 4   | Stutter when starting play          | Buffering    | Empty buffer, waiting for min read-ahead (1s)        | Observe "buffering" state                        | Producer-consumer with condvar               | Predictive pre-buffering                                                                                           |
-| 5   | OOM / tab crash                     | Caching      | Total cache > tab's available memory                 | Monitor `getCacheSize()`                         | 600MB cap + LRU eviction                     | Adaptive cache sizing based on `performance.memory`                                                                |
-| 6   | Slow seek in large MCAP             | MCAP I/O     | Seek requires finding correct chunk + decompressing  | Measure time of `getBackfillMessages()`          | Cache reuses already-read blocks             | In-memory chunk index with binary search                                                                           |
-| 7   | Low FPS in 3D                       | Rendering    | Point clouds with 500k+ points                       | GPU memory in DevTools                           | LOD, DynamicBufferGeometry                   | Octree culling, point budget, **WASM point cloud processing** (see 5.5), **Worker offloading** (see 5.6 #1)        |
-| 8   | Low FPS with decay                  | Rendering    | History accumulates geometries                       | Count objects in scene                           | `RenderObjectHistory` with limit             | Instanced rendering for decay                                                                                      |
-| 9   | Jank when expanding RawMessages     | Panel/React  | DOM explosion without virtualization                 | React DevTools profiler                          | VirtualizedTree with @tanstack/react-virtual | Lazy expansion (load on demand)                                                                                    |
-| 10  | Delayed live messages               | WebSocket    | Publisher sends faster than UI processes             | Latency between publish and render               | No specific throttle                         | Message dropping / sampling, **WS deserialization → Worker** (see 5.6 #2)                                          |
-| 11  | Script execution lag                | User Scripts | Script executes for each message                     | Measure time per execution in worker             | Worker isolation                             | Batch execution, throttle                                                                                          |
-| 12  | Slow images                         | Rendering    | Large image decode on main thread                    | Performance profiler (decode time)               | `WorkerImageDecoder`                         | **WASM image decoder** (`wasm-image` — see 5.5), GPU decode                                                        |
-| 13  | Memory grows continuously           | All          | Leaks in closures, event listeners, caches           | Heap snapshot comparison                         | N/A                                          | Periodic cache purge, WeakRef                                                                                      |
-| 14  | Slow remote file seek               | Remote I/O   | HTTP range request + network latency                 | Network tab, cache hit ratio                     | 500MB CachedFilelike                         | Predictive prefetch                                                                                                |
-| 15  | 3D panel blocks React UI            | Rendering    | THREE.js render loop on main thread (8-20ms/frame)   | Performance profiler (long tasks)                | None                                         | **THREE.js → OffscreenCanvas Worker** (see 5.6 #3)                                                                 |
-| 16  | Live WS jank with many topics       | WebSocket    | `deserialize()` runs on main thread per message      | Profiler: `deserialize` in flame chart           | `WorkerSocketAdapter` (I/O only)             | **Move deserialization into Worker** (see 5.6 #2)                                                                  |
-| 17  | Extension converter freezes UI      | Extensions   | Slow/infinite converter blocks main thread           | Profiler: long `convertMessage` task             | `try/catch` (exceptions only)                | **Converter time tracking + auto-disable** (see 9B.5 #1), **Converter Worker** (see 9B.5 #2)                       |
-| 18  | Extension over-subscription         | Extensions   | Extension subscribes all topics with `preload: true` | Memory profiler: growing `allFrames`             | None                                         | **Subscription budget per extension** (see 9B.5 #3)                                                                |
-| 19  | Slow extension panel blocks pipeline| Extensions   | Panel `onRender` takes >5s, stalls `pauseFrame`      | Pipeline freeze after frame delivery             | 5000ms timeout (too generous)                | **Reduce timeout to ~500ms**, auto-disable slow panels (see 9B.5)                                                  |
+| #   | Symptom                              | Layer        | Root Cause                                           | Diagnosis                                        | Existing Solution                            | Possible Improvement                                                                                               |
+| --- | ------------------------------------ | ------------ | ---------------------------------------------------- | ------------------------------------------------ | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------ |
+| 1   | App freezes when opening large MCAP  | MCAP Reading | Unindexed file trying to load everything into memory | Check if MCAP has summary section                | 1GB limit for unindexed                      | Partial streaming for unindexed                                                                                    |
+| 2   | Slow initialization (>10s)           | MCAP Reading | Too many chunk indexes to parse                      | Measure time in `McapIndexedReader.Initialize()` | Preload decompressHandlers                   | Index caching between sessions                                                                                     |
+| 3   | Choppy playback                      | Player Tick  | Too many messages in 300ms tick window               | Count msgs/tick in debug                         | 300ms cap + EMA smoothing                    | Adaptive tick window, message sampling, WASM deserialization for complex schemas (⚠️ high boundary cost — see 5.5) |
+| 4   | Stutter when starting play           | Buffering    | Empty buffer, waiting for min read-ahead (1s)        | Observe "buffering" state                        | Producer-consumer with condvar               | Predictive pre-buffering                                                                                           |
+| 5   | OOM / tab crash                      | Caching      | Total cache > tab's available memory                 | Monitor `getCacheSize()`                         | 600MB cap + LRU eviction                     | Adaptive cache sizing based on `performance.memory`                                                                |
+| 6   | Slow seek in large MCAP              | MCAP I/O     | Seek requires finding correct chunk + decompressing  | Measure time of `getBackfillMessages()`          | Cache reuses already-read blocks             | In-memory chunk index with binary search                                                                           |
+| 7   | Low FPS in 3D                        | Rendering    | Point clouds with 500k+ points                       | GPU memory in DevTools                           | LOD, DynamicBufferGeometry                   | Octree culling, point budget, **WASM point cloud processing** (see 5.5), **Worker offloading** (see 5.6 #1)        |
+| 8   | Low FPS with decay                   | Rendering    | History accumulates geometries                       | Count objects in scene                           | `RenderObjectHistory` with limit             | Instanced rendering for decay                                                                                      |
+| 9   | Jank when expanding RawMessages      | Panel/React  | DOM explosion without virtualization                 | React DevTools profiler                          | VirtualizedTree with @tanstack/react-virtual | Lazy expansion (load on demand)                                                                                    |
+| 10  | Delayed live messages                | WebSocket    | Publisher sends faster than UI processes             | Latency between publish and render               | No specific throttle                         | Message dropping / sampling, **WS deserialization → Worker** (see 5.6 #2)                                          |
+| 11  | Script execution lag                 | User Scripts | Script executes for each message                     | Measure time per execution in worker             | Worker isolation                             | Batch execution, throttle                                                                                          |
+| 12  | Slow images                          | Rendering    | Large image decode on main thread                    | Performance profiler (decode time)               | `WorkerImageDecoder`                         | **WASM image decoder** (`wasm-image` — see 5.5), GPU decode                                                        |
+| 13  | Memory grows continuously            | All          | Leaks in closures, event listeners, caches           | Heap snapshot comparison                         | N/A                                          | Periodic cache purge, WeakRef                                                                                      |
+| 14  | Slow remote file seek                | Remote I/O   | HTTP range request + network latency                 | Network tab, cache hit ratio                     | 500MB CachedFilelike                         | Predictive prefetch                                                                                                |
+| 15  | 3D panel blocks React UI             | Rendering    | THREE.js render loop on main thread (8-20ms/frame)   | Performance profiler (long tasks)                | None                                         | **THREE.js → OffscreenCanvas Worker** (see 5.6 #3)                                                                 |
+| 16  | Live WS jank with many topics        | WebSocket    | `deserialize()` runs on main thread per message      | Profiler: `deserialize` in flame chart           | `WorkerSocketAdapter` (I/O only)             | **Move deserialization into Worker** (see 5.6 #2)                                                                  |
+| 17  | Extension converter freezes UI       | Extensions   | Slow/infinite converter blocks main thread           | Profiler: long `convertMessage` task             | `try/catch` (exceptions only)                | **Converter time tracking + auto-disable** (see 9B.5 #1), **Converter Worker** (see 9B.5 #2)                       |
+| 18  | Extension over-subscription          | Extensions   | Extension subscribes all topics with `preload: true` | Memory profiler: growing `allFrames`             | None                                         | **Subscription budget per extension** (see 9B.5 #3)                                                                |
+| 19  | Slow extension panel blocks pipeline | Extensions   | Panel `onRender` takes >5s, stalls `pauseFrame`      | Pipeline freeze after frame delivery             | 5000ms timeout (too generous)                | **Reduce timeout to ~500ms**, auto-disable slow panels (see 9B.5)                                                  |
 
 ### 10.3 Prioritization by Impact
 
-| Priority  | Issue                  | Impact      | Frequency   |
-| --------- | ---------------------- | ----------- | ----------- |
-| 🔴 High   | OOM / Tab Crash        | Very High   | High        |
-| 🔴 High   | Choppy Playback        | High        | Very High   |
-| 🔴 High   | Low 3D FPS             | High        | High        |
-| 🟡 Medium | Slow Seek              | Medium-High | Medium      |
-| 🟡 Medium | WebSocket backpressure | Medium      | Medium      |
-| 🟡 Medium | Slow Init              | Medium      | Medium-Low  |
-| 🟢 Low    | Script Lag             | Medium-Low  | Low         |
-| 🟢 Low    | Image decode           | Low-Medium  | Medium-High |
-| 🟢 Low    | RawMsg jank            | Low         | Medium      |
-| 🟢 Low    | Remote seek            | Medium-Low  | Low         |
-| 🔴 High   | Extension converter freeze | High    | Medium      |
-| 🟡 Medium | Extension over-subscription | Medium | Medium-Low  |
+| Priority  | Issue                       | Impact      | Frequency   |
+| --------- | --------------------------- | ----------- | ----------- |
+| 🔴 High   | OOM / Tab Crash             | Very High   | High        |
+| 🔴 High   | Choppy Playback             | High        | Very High   |
+| 🔴 High   | Low 3D FPS                  | High        | High        |
+| 🟡 Medium | Slow Seek                   | Medium-High | Medium      |
+| 🟡 Medium | WebSocket backpressure      | Medium      | Medium      |
+| 🟡 Medium | Slow Init                   | Medium      | Medium-Low  |
+| 🟢 Low    | Script Lag                  | Medium-Low  | Low         |
+| 🟢 Low    | Image decode                | Low-Medium  | Medium-High |
+| 🟢 Low    | RawMsg jank                 | Low         | Medium      |
+| 🟢 Low    | Remote seek                 | Medium-Low  | Low         |
+| 🔴 High   | Extension converter freeze  | High        | Medium      |
+| 🟡 Medium | Extension over-subscription | Medium      | Medium-Low  |
 
 ---
 
