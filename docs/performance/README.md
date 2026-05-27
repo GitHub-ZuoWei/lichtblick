@@ -22,72 +22,93 @@
 
 ## 1. Pipeline Overview
 
-Lichtblick processes data from the source (file, URL, WebSocket) all the way to panel rendering. Each layer is a potential bottleneck.
+Lichtblick processes data from the source (file, URL, WebSocket) all the way to panel rendering. Each layer is a potential bottleneck. The diagram below shows the **actual instantiation order** as found in `IterablePlayer.ts` and the WebSocket path.
+
+> **Key architectural insight:** For the file-based (iterable) pipeline, only MCAP parsing and I/O run inside a Web Worker. All buffering, caching, deserialization, and preloading happen on the **main thread**. Data crosses the Worker boundary as raw `Uint8Array` bytes via Comlink RPC.
 
 ```mermaid
 flowchart TB
     subgraph DataSource["📁 Data Source Layer"]
-        LocalFile["Local File<br/>(Blob API)"]
+        LocalFile["Local File<br/>(Blob API → BlobReadable)"]
         RemoteURL["Remote URL<br/>(HTTP Range Requests)"]
         WebSocket["WebSocket<br/>(Live Stream)"]
     end
 
-    subgraph WorkerLayer["⚙️ Web Worker Layer"]
-        McapWorker["McapIterableSourceWorker<br/>(Worker Thread)"]
-        Comlink["Comlink Proxy<br/>(Transferable Buffers)"]
+    subgraph WorkerThread["⚙️ Web Worker Thread"]
+        direction TB
+        CachedFile["CachedFilelike<br/>(HTTP LRU cache, 500MB,<br/>remote files only)"]
+        McapWorker["McapIterableSourceWorker<br/>(MCAP parsing + zstd/lz4<br/>chunk decompression)"]
+        ComlinkTransfer["Comlink.transfer()<br/>(zero-copy ArrayBuffer<br/>ownership transfer)"]
+        CachedFile --> McapWorker --> ComlinkTransfer
     end
 
-    subgraph DeserLayer["🔄 Deserialization Layer"]
-        DeserSource["DeserializingIterableSource<br/>(Schema Parsing + Decode)"]
-        MemEstimation["Memory Estimation<br/>(V8 Object Size)"]
+    subgraph MainThread["🧵 Main Thread — all layers below run here"]
+        direction TB
+
+        subgraph BufferCacheLayer["📦 Buffering & Caching<br/>(BufferedIterableSource wraps CachingIterableSource internally)"]
+            WorkerProxy["WorkerSerializedIterableSource<br/>(Comlink proxy to Worker)"]
+            BufferedSource["BufferedIterableSource<br/>(Producer-Consumer, VecQueue)"]
+            CachingSource["  ↳ CachingIterableSource<br/>    (LRU Block Cache, internal)"]
+        end
+
+        subgraph DeserLayer["🔄 Deserialization<br/>(lazy, on-demand)"]
+            DeserSource["DeserializingIterableSource<br/>(parseChannel → deserialize)"]
+            MemEstimation["estimateMessageObjectSize()<br/>(V8 Object Size tracking)"]
+        end
+
+        subgraph PreloadLayer["📥 Preloading (allFrames)"]
+            BLDeser["DeserializingIterableSource<br/>(separate instance,<br/>wraps raw source directly)"]
+            BlockLoader["BlockLoader<br/>(fixed-duration blocks,<br/>1GB cache budget)"]
+        end
+
+        subgraph WSPlayerLayer["📡 WebSocket Path (no Worker for data)"]
+            WSWorker["WorkerSocketAdapter<br/>(Socket I/O in Worker)"]
+            WSClient["FoxgloveClient<br/>(ws-protocol framing)"]
+            WSDeser["parseChannel().deserialize()<br/>(⚠️ runs on Main Thread)"]
+            WSBuffer["parsedMessages[]<br/>(400MB cap, drained each emit)"]
+        end
+
+        subgraph PlayerLayer["▶️ Player Layer"]
+            IterablePlayer["IterablePlayer<br/>(State Machine + Tick Loop)"]
+            UserScriptPlayer["UserScriptPlayer<br/>(SharedWorker execution)"]
+        end
+
+        subgraph PipelineLayer["🔗 Message Pipeline"]
+            MsgPipeline["MessagePipeline<br/>(React Context + Zustand)"]
+            RenderState["RenderState Builder<br/>(Memoized, Incremental)"]
+        end
     end
 
-    subgraph BufferLayer["📦 Buffering & Caching Layer"]
-        BufferedSource["BufferedIterableSource<br/>(Producer-Consumer, Read-Ahead 10s)"]
-        CachingSource["CachingIterableSource<br/>(LRU Block Cache, 600MB max)"]
-        BlockLoader["BlockLoader<br/>(Preloading for Panels)"]
-    end
-
-    subgraph WSPlayerLayer["📡 WebSocket Player (Main Thread)"]
-        WSWorker["WorkerSocketAdapter<br/>(Socket I/O in Worker)"]
-        WSPlayer["FoxgloveWebSocketPlayer"]
-        WSDeser["parseChannel().deserialize()<br/>(⚠️ runs on Main Thread)"]
-        WSBuffer["parsedMessages queue<br/>(capped by CURRENT_FRAME_MAXIMUM_SIZE_BYTES)"]
-    end
-
-    subgraph PlayerLayer["▶️ Player Layer"]
-        IterablePlayer["IterablePlayer<br/>(State Machine + Tick Loop)"]
-        UserScriptPlayer["UserScriptPlayer<br/>(Script Execution Workers)"]
-    end
-
-    subgraph PipelineLayer["🔗 Message Pipeline"]
-        MsgPipeline["MessagePipeline Context<br/>(React Context)"]
-        RenderState["RenderState Builder<br/>(Memoized, Incremental)"]
-    end
-
-    subgraph PanelLayer["🖥️ Panel Rendering Layer"]
-        ThreeDee["ThreeDeeRender<br/>(THREE.js)"]
+    subgraph PanelLayer["🖥️ Panel Rendering"]
+        ThreeDee["ThreeDeeRender<br/>(THREE.js WebGL)"]
         RawMsg["RawMessages<br/>(Virtualized Tree)"]
         OtherPanels["Other Panels<br/>(Plot, Image, Log, etc.)"]
     end
 
+    %% File-based pipeline
     LocalFile --> McapWorker
-    RemoteURL --> McapWorker
-    WebSocket -.->|"Live"| WSWorker
+    RemoteURL --> CachedFile
+    ComlinkTransfer -->|"Uint8Array batches<br/>(17ms windows)"| WorkerProxy
 
-    WSWorker -->|"raw bytes"| WSPlayer
-    WSPlayer --> WSDeser
-    WSDeser --> WSBuffer
-    WSBuffer -->|"emitState()"| UserScriptPlayer
-
-    McapWorker --> Comlink
-    Comlink -->|"Uint8Array<br/>(zero-copy transfer)"| DeserSource
+    WorkerProxy --> BufferedSource
+    BufferedSource ---|"internally creates"| CachingSource
+    BufferedSource -->|"deserialized msgs"| DeserSource
     DeserSource --> MemEstimation
-    DeserSource --> BufferedSource
-    BufferedSource --> CachingSource
-    CachingSource --> IterablePlayer
-    BlockLoader -->|"Historical preload"| IterablePlayer
+    DeserSource --> IterablePlayer
 
+    %% BlockLoader bypasses buffer — reads from raw source
+    WorkerProxy -.->|"bypasses buffer<br/>(separate read path)"| BLDeser
+    BLDeser --> BlockLoader
+    BlockLoader -->|"progress.messageCache<br/>(allFrames)"| IterablePlayer
+
+    %% WebSocket pipeline
+    WebSocket -.->|"Live"| WSWorker
+    WSWorker -->|"raw bytes<br/>(transferred)"| WSClient
+    WSClient --> WSDeser
+    WSDeser --> WSBuffer
+    WSBuffer -->|"emitState()<br/>(debounced)"| UserScriptPlayer
+
+    %% Player → Panels
     IterablePlayer --> UserScriptPlayer
     UserScriptPlayer --> MsgPipeline
     MsgPipeline --> RenderState
@@ -97,27 +118,63 @@ flowchart TB
     RenderState --> OtherPanels
 
     style DataSource fill:#e1f5fe
-    style WorkerLayer fill:#fff3e0
+    style WorkerThread fill:#fff3e0
+    style MainThread fill:#fafafa
+    style BufferCacheLayer fill:#e8f5e9
     style DeserLayer fill:#f3e5f5
-    style BufferLayer fill:#e8f5e9
+    style PreloadLayer fill:#e8eaf6
     style WSPlayerLayer fill:#fff3e0
     style PlayerLayer fill:#fce4ec
     style PipelineLayer fill:#fffde7
     style PanelLayer fill:#f1f8e9
 ```
 
+### Thread Boundary — What Runs Where
+
+| Component                             | Thread     | Purpose                                                 |
+| ------------------------------------- | ---------- | ------------------------------------------------------- |
+| `McapIterableSourceWorker`            | **Worker** | MCAP parsing, chunk decompression (zstd/lz4)            |
+| `CachedFilelike` / `VirtualLRUBuffer` | **Worker** | HTTP byte-level LRU cache (remote files only, 500MB)    |
+| `WorkerSerializedIterableSource`      | **Main**   | Comlink proxy — bridges Worker ↔ Main                  |
+| `BufferedIterableSource`              | **Main**   | Producer-consumer read-ahead (10s default, 120s local)  |
+| `CachingIterableSource`               | **Main**   | LRU block cache (300MB serialized / 600MB deserialized) |
+| `DeserializingIterableSource`         | **Main**   | Lazy schema-based deserialization + memory estimation   |
+| `BlockLoader`                         | **Main**   | Preloading for `allFrames` panel subscriptions (1GB)    |
+| `FoxgloveWebSocketPlayer`             | **Main**   | Live deserialization + parsedMessages queue (400MB cap) |
+| `UserScriptPlayer`                    | **Main**   | Delegates script execution to SharedWorkers             |
+
 ### Critical Performance Points (per layer)
 
-| Layer           | Main Problem                        | Impact                |
-| --------------- | ----------------------------------- | --------------------- |
-| Data Source     | Disk / network I/O                  | Open and read latency |
-| Worker          | Cross-thread communication overhead | Transfer latency      |
-| Deserialization | CPU-bound (schema parsing)          | Playback jank         |
-| Buffering/Cache | Memory pressure                     | OOM, tab crash        |
-| Player          | Tick overflow (too many msgs/tick)  | Choppy playback       |
-| Rendering       | GPU/CPU bound (point clouds, 3D)    | Low FPS               |
-| Panels (React)  | Unnecessary re-renders              | UI lag                |
-| User Scripts    | Per-message execution               | Cumulative delay      |
+| Layer           | Main Problem                                    | Impact                     |
+| --------------- | ----------------------------------------------- | -------------------------- |
+| Data Source     | Disk / network I/O                              | Open and read latency      |
+| Worker          | Cross-thread communication overhead             | Transfer latency           |
+| Buffering/Cache | Memory pressure (300-600MB cache + 1GB preload) | OOM, tab crash             |
+| Deserialization | CPU-bound (schema parsing, runs on main thread) | Playback jank, UI blocking |
+| Player          | Tick overflow (too many msgs/tick)              | Choppy playback            |
+| Rendering       | GPU/CPU bound (point clouds, 3D)                | Low FPS                    |
+| Panels (React)  | Unnecessary re-renders                          | UI lag                     |
+| User Scripts    | Per-message execution                           | Cumulative delay           |
+
+### Data Flow — Instantiation Order (from code)
+
+The `IterablePlayer` constructor ([IterablePlayer.ts:218-229](packages/suite-base/src/players/IterablePlayer/IterablePlayer.ts#L218-L229)) builds the pipeline in this order:
+
+```
+source (Worker proxy)
+  → BufferedIterableSource(source, {readAheadDuration, maxCacheSizeBytes: 300MB})
+      → internally creates CachingIterableSource(source, {maxTotalSize: 300MB})
+  → DeserializingIterableSource(bufferedSource)
+      → IterablePlayer consumes via this.#bufferedSource
+```
+
+BlockLoader is set up separately in `#stateInitialize()` ([IterablePlayer.ts:630-649](packages/suite-base/src/players/IterablePlayer/IterablePlayer.ts#L630-L649)), wrapping the **raw source** in its own `DeserializingIterableSource` — it bypasses the buffer/cache chain entirely:
+
+```
+source (Worker proxy)  ← same instance, shared
+  → DeserializingIterableSource(source)   ← separate instance
+    → BlockLoader({cacheSizeBytes: 1GB, source: ...})
+```
 
 ---
 
