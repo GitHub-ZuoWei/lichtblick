@@ -15,6 +15,7 @@ Lichtblick is an integrated visualization and diagnosis tool for robotics, built
 - [Branching Strategy](#branching-strategy---git-flow)
 - [Code Style & Standards](#code-style--standards)
 - [Testing](#testing)
+- [AI-Assisted Development](#ai-assisted-development)
 - [Pull Request Guidelines](#pull-request-guidelines)
 - [Reporting Issues](#reporting-issues)
 - [Version Increment](#version-increment)
@@ -413,6 +414,37 @@ The following checks run automatically on every PR:
 
 ---
 
+## AI-Assisted Development
+
+The project uses **GitHub Copilot agent mode** (VS Code 1.99+) with project-specific agents and skills to accelerate development workflows. AI agents are configured via Markdown files in `.github/` and operate within clearly defined conventions.
+
+### Available Agents
+
+| Agent | Invocation | Purpose |
+| --- | --- | --- |
+| `Lichtblick E2E Test` | `@lb-e2e-test` | Creates Playwright E2E tests for desktop (Electron) and web, using the Playwright MCP browser for web UI exploration |
+
+### Skills
+
+Skills are reusable domain knowledge files loaded by agents before performing tasks:
+
+| Skill | Location | Scope |
+| --- | --- | --- |
+| `test-conventions` | `.github/skills/test-conventions/SKILL.md` | GWT pattern, quality rules, and test-writing workflow for all test types |
+| `e2e-playwright-mcp` | `.github/skills/e2e-playwright-mcp/SKILL.md` | E2E-specific: fixture reference, selector strategy, MCP usage, and source instrumentation |
+
+### Global Context
+
+`.github/copilot-instructions.md` is auto-loaded at the start of every Copilot Chat session. It defines project-wide rules for code style, testing, and available agents.
+
+### Playwright MCP Server
+
+The Playwright MCP server (configured in `.vscode/mcp.json`) enables AI agents to explore the running web app via accessibility snapshots, discover stable selectors, and generate test scaffolds interactively.
+
+> **Note**: The MCP server drives Chrome (web) only — it cannot automate the Electron desktop app. See `e2e/README.md` for detailed workflow documentation.
+
+---
+
 ## Pull Request Guidelines
 
 > :lock: **Direct PRs to the repository** are restricted to the internal development team. Community contributors must submit PRs **from a fork** of the repository. All contributions — internal and external — follow the same review and CI requirements.
@@ -433,6 +465,31 @@ When opening a PR, fill in the template provided:
 - **Description:** Link relevant GitHub issues. Add the `docs` label if documentation updates are needed.
 - **Size:** Keep PRs focused. Smaller PRs are reviewed faster and have fewer merge conflicts.
 - **Reviewers:** PRs require at least one approving review before merging.
+
+### Automated Code Review with CodeRabbit
+
+[CodeRabbit](https://coderabbit.ai) provides automated AI-powered code reviews on PRs targeting `develop` and `main` branches, except for draft PRs or those with titles containing `WIP`, `Draft`, or `[SKIP CI]`. It runs automatically and complements human reviews.
+
+**What CodeRabbit checks:**
+- Code style and best practices
+- Security issues (especially in Electron/IPC and web code)
+- TypeScript type safety and unused code
+- Test quality and coverage
+- Platform-specific concerns (web vs. desktop compatibility)
+- Performance and accessibility
+
+**How it works:**
+- CodeRabbit automatically comments with a summary and detailed findings on each PR
+- Comments include line-by-line suggestions and context-aware recommendations
+- It respects the project's `.coderabbit.yaml` configuration with domain-specific instructions
+
+**Manual review requests:**
+If you want a fresh review of an existing PR, comment:
+```text
+@coderabbitai review
+```
+
+**Important:** CodeRabbit is a supplementary tool — human reviews are still required for approval before merging. CodeRabbit cannot approve or merge PRs.
 
 ---
 
