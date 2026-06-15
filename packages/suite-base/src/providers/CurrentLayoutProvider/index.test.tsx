@@ -7,7 +7,7 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
-import { act, renderHook } from "@testing-library/react";
+import { act, renderHook, waitFor } from "@testing-library/react";
 import { SnackbarProvider, useSnackbar } from "notistack";
 import { useEffect } from "react";
 
@@ -461,6 +461,34 @@ describe("CurrentLayoutProvider", () => {
       `The layout '${mockAppParameters.defaultLayout}' specified in the app parameters does not exist.`,
       { variant: "warning" },
     );
+  });
+
+  it("selects an existing Default instead of creating a duplicate when one appears before fallback", async () => {
+    // Given: the initial listing is empty, but a re-check (e.g. after a background remote sync
+    // populated the cache) finds an existing "Default" layout.
+    const existingDefault = {
+      id: "existing-default",
+      name: "Default",
+      baseline: { updatedAt: new Date(10).toISOString(), data: TEST_LAYOUT },
+      permission: "CREATOR_WRITE",
+    };
+    mockLayoutManager.getLayouts
+      .mockImplementationOnce(async () => [])
+      .mockImplementation(async () => [existingDefault]);
+    mockLayoutManager.getLayout.mockImplementation(async () => existingDefault);
+
+    const { all } = renderTest({ mockLayoutManager, mockUserProfile });
+
+    await waitFor(() => {
+      expect(all.some((item) => item.layoutState.selectedLayout?.id != undefined)).toBe(true);
+    });
+
+    // Then: no new layout is created, and the existing Default is selected.
+    expect(mockLayoutManager.saveNewLayout).not.toHaveBeenCalled();
+    expect(mockLayoutManager.getLayout).toHaveBeenCalledWith("existing-default");
+    const selectedLayout = all.find((item) => item.layoutState.selectedLayout?.id)?.layoutState
+      .selectedLayout?.id;
+    expect(selectedLayout).toBe("existing-default");
   });
 
   describe("Default layout logic", () => {

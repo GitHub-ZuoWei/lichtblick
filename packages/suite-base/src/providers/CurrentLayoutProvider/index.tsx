@@ -83,6 +83,12 @@ export default function CurrentLayoutProvider({
 
   const [mosaicId] = useState(() => uuidv4());
 
+  // Ensures the initial layout-selection effect runs only once per provider instance, even if the
+  // effect is re-invoked (e.g. React.StrictMode double-invoke or dependency identity changes).
+  // This single-flights initialization so the fallback "Default" layout can't be created
+  // concurrently by overlapping runs.
+  const didInitializeRef = useRef(false);
+
   const layoutStateListeners = useRef(new Set<(_: LayoutState) => void>());
   const addLayoutStateListener = useCallback((listener: (_: LayoutState) => void) => {
     layoutStateListeners.current.add(listener);
@@ -285,6 +291,14 @@ export default function CurrentLayoutProvider({
       return;
     }
 
+    // Single-flight guard: only run initialization once per provider instance. Without this, an
+    // overlapping re-invocation (StrictMode or dependency identity changes) could both observe an
+    // empty layout list and each create a fallback "Default", duplicating it.
+    if (didInitializeRef.current) {
+      return;
+    }
+    didInitializeRef.current = true;
+
     // For some reason, this needs to go before the setSelectedLayoutId, probably some initialization
     const { currentLayoutId } = await getUserProfile();
 
@@ -346,6 +360,15 @@ export default function CurrentLayoutProvider({
       const layoutsToSort = orgLayouts.length > 0 ? orgLayouts : layouts;
       const sortedLayouts = [...layoutsToSort].sort((a, b) => a.name.localeCompare(b.name));
       await setSelectedLayoutId(sortedLayouts[0]!.id);
+      return;
+    }
+
+    // Re-check for an existing "Default" immediately before creating one. A background remote sync
+    // may have populated the cache after the earlier getLayouts() call, so creating unconditionally
+    // here would duplicate the fallback layout.
+    const existingDefault = (await layoutManager.getLayouts()).find((l) => l.name === "Default");
+    if (existingDefault) {
+      await setSelectedLayoutId(existingDefault.id);
       return;
     }
 
