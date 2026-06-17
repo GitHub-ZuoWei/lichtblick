@@ -2,7 +2,9 @@
 // SPDX-License-Identifier: MPL-2.0
 
 import { MultiSource } from "@lichtblick/suite-base/players/IterablePlayer/shared/types";
+import { MessageEvent, TopicSelection } from "@lichtblick/suite-base/players/types";
 import InitilizationSourceBuilder from "@lichtblick/suite-base/testing/builders/InitilizationSourceBuilder";
+import MessageEventBuilder from "@lichtblick/suite-base/testing/builders/MessageEventBuilder";
 import RosTimeBuilder from "@lichtblick/suite-base/testing/builders/RosTimeBuilder";
 import { BasicBuilder } from "@lichtblick/test-builders";
 
@@ -88,13 +90,89 @@ describe("MultiIterableSource", () => {
         type: "url",
         url: url1,
         cacheSizeInBytes: expect.any(Number),
+        readAheadEnabled: false,
       });
       expect(mockSourceConstructor).toHaveBeenNthCalledWith(2, {
         type: "url",
         url: url2,
         cacheSizeInBytes: expect.any(Number),
+        readAheadEnabled: false,
       });
       expect(initializations).toHaveLength(2);
+    });
+    it("should disable read-ahead by default for multi-url sources", async () => {
+      // GIVEN: a multi-url source with three URLs.
+      const urls = [BasicBuilder.string(), BasicBuilder.string(), BasicBuilder.string()];
+      const multiSource = new MultiIterableSource(
+        {
+          type: "urls",
+          urls,
+        },
+        mockSourceConstructor,
+      );
+
+      // WHEN
+      await multiSource["loadMultipleSources"]();
+
+      // THEN: each constructed source opts out of speculative read-ahead.
+      expect(mockSourceConstructor.mock.calls[0]![0].readAheadEnabled).toBe(false);
+      expect(mockSourceConstructor.mock.calls[1]![0].readAheadEnabled).toBe(false);
+      expect(mockSourceConstructor.mock.calls[2]![0].readAheadEnabled).toBe(false);
+    });
+    it("should enable read-ahead by default for a single-url source", async () => {
+      // GIVEN: a single-url source.
+      const urls = [BasicBuilder.string()];
+      const multiSource = new MultiIterableSource(
+        {
+          type: "urls",
+          urls,
+        },
+        mockSourceConstructor,
+      );
+
+      // WHEN
+      await multiSource["loadMultipleSources"]();
+
+      // THEN: the constructed source keeps legacy read-ahead behavior.
+      expect(mockSourceConstructor.mock.calls[0]![0].readAheadEnabled).toBe(true);
+    });
+    it("should respect an explicit readAheadEnabled override for multi-url sources", async () => {
+      // GIVEN: a multi-url source that explicitly opts into read-ahead.
+      const urls = [BasicBuilder.string(), BasicBuilder.string(), BasicBuilder.string()];
+      const multiSource = new MultiIterableSource(
+        {
+          type: "urls",
+          urls,
+          readAheadEnabled: true,
+        },
+        mockSourceConstructor,
+      );
+
+      // WHEN
+      await multiSource["loadMultipleSources"]();
+
+      // THEN: the explicit value overrides the multi-url default of false.
+      expect(mockSourceConstructor.mock.calls[0]![0].readAheadEnabled).toBe(true);
+      expect(mockSourceConstructor.mock.calls[1]![0].readAheadEnabled).toBe(true);
+      expect(mockSourceConstructor.mock.calls[2]![0].readAheadEnabled).toBe(true);
+    });
+    it("should respect an explicit readAheadEnabled override for a single-url source", async () => {
+      // GIVEN: a single-url source that explicitly opts out of read-ahead.
+      const urls = [BasicBuilder.string()];
+      const multiSource = new MultiIterableSource(
+        {
+          type: "urls",
+          urls,
+          readAheadEnabled: false,
+        },
+        mockSourceConstructor,
+      );
+
+      // WHEN
+      await multiSource["loadMultipleSources"]();
+
+      // THEN: the explicit value overrides the single-url default of true.
+      expect(mockSourceConstructor.mock.calls[0]![0].readAheadEnabled).toBe(false);
     });
     it("should allocate equal cache split when few sources do not trigger the minimum floor", async () => {
       // GIVEN: 2 URL sources with the default 500 MiB total cache budget.
@@ -270,6 +348,93 @@ describe("MultiIterableSource", () => {
       );
 
       expect(mockSourceConstructor).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  describe("getBackfillMessages", () => {
+    const makeSource = (startSec: number, backfill: jest.Mock): IIterableSource<Uint8Array> =>
+      ({
+        initialize: jest.fn(),
+        messageIterator: jest.fn(),
+        getBackfillMessages: backfill,
+        getStart: jest.fn().mockReturnValue({ sec: startSec, nsec: 0 }),
+        getEnd: jest.fn().mockReturnValue({ sec: startSec + 10, nsec: 0 }),
+      }) as unknown as IIterableSource<Uint8Array>;
+
+    const messageOnTopic = (topic: string): MessageEvent<Uint8Array> =>
+      MessageEventBuilder.messageEvent<Uint8Array>({ topic, message: new Uint8Array() });
+
+    const topicSelection = (...topics: string[]): TopicSelection =>
+      new Map(topics.map((topic) => [topic, { topic }]));
+
+    it("should stop querying earlier sources once all requested topics are satisfied", async () => {
+      // GIVEN: three time-sequential sources; the nearest (latest start) already has every topic.
+      const farBackfill = jest.fn().mockResolvedValue([]);
+      const midBackfill = jest.fn().mockResolvedValue([]);
+      const nearBackfill = jest.fn().mockResolvedValue([messageOnTopic("a"), messageOnTopic("b")]);
+
+      const multiSource = new MultiIterableSource(dataSource, mockSourceConstructor);
+      multiSource["sourceImpl"] = [
+        makeSource(0, farBackfill),
+        makeSource(10, midBackfill),
+        makeSource(20, nearBackfill),
+      ];
+
+      // WHEN: backfilling at a time covered by the nearest source.
+      const result = await multiSource.getBackfillMessages({
+        topics: topicSelection("a", "b"),
+        time: { sec: 25, nsec: 0 },
+      });
+
+      // THEN: only the nearest source is queried; the redundant earlier sources are skipped.
+      expect(nearBackfill).toHaveBeenCalledTimes(1);
+      expect(midBackfill).not.toHaveBeenCalled();
+      expect(farBackfill).not.toHaveBeenCalled();
+      expect(result.map((message) => message.topic).sort()).toEqual(["a", "b"]);
+    });
+
+    it("should fall back to earlier sources only for topics missing from nearer ones", async () => {
+      // GIVEN: the nearest source has only topic "a"; the middle source has "b".
+      const farBackfill = jest.fn().mockResolvedValue([]);
+      const midBackfill = jest.fn().mockResolvedValue([messageOnTopic("b")]);
+      const nearBackfill = jest.fn().mockResolvedValue([messageOnTopic("a")]);
+
+      const multiSource = new MultiIterableSource(dataSource, mockSourceConstructor);
+      multiSource["sourceImpl"] = [
+        makeSource(0, farBackfill),
+        makeSource(10, midBackfill),
+        makeSource(20, nearBackfill),
+      ];
+
+      // WHEN
+      const result = await multiSource.getBackfillMessages({
+        topics: topicSelection("a", "b"),
+        time: { sec: 25, nsec: 0 },
+      });
+
+      // THEN: the nearest source is asked for both topics, the middle source is asked only for the
+      // still-missing "b", and the farthest source is never reached.
+      expect([...nearBackfill.mock.calls[0]![0].topics.keys()].sort()).toEqual(["a", "b"]);
+      expect([...midBackfill.mock.calls[0]![0].topics.keys()]).toEqual(["b"]);
+      expect(farBackfill).not.toHaveBeenCalled();
+      expect(result.map((message) => message.topic).sort()).toEqual(["a", "b"]);
+    });
+
+    it("should not query any source when there are no topics to backfill", async () => {
+      // GIVEN: a source that would return messages if queried.
+      const backfill = jest.fn().mockResolvedValue([messageOnTopic("a")]);
+      const multiSource = new MultiIterableSource(dataSource, mockSourceConstructor);
+      multiSource["sourceImpl"] = [makeSource(0, backfill)];
+
+      // WHEN: backfilling with an empty topic selection.
+      const result = await multiSource.getBackfillMessages({
+        topics: topicSelection(),
+        time: { sec: 25, nsec: 0 },
+      });
+
+      // THEN: nothing is fetched.
+      expect(backfill).not.toHaveBeenCalled();
+      expect(result).toEqual([]);
     });
   });
 
