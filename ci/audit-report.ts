@@ -19,6 +19,7 @@
  */
 
 import fs from "node:fs";
+import path from "node:path";
 
 type Severity = "info" | "low" | "moderate" | "high" | "critical";
 
@@ -170,11 +171,11 @@ function countBySeverity(groups: PackageGroup[]): Record<Severity, number> {
 
 function escapeHtml(value: string): string {
   return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
 }
 
 function renderAdvisory(advisory: NormalizedAdvisory): string {
@@ -395,18 +396,37 @@ async function readStdin(): Promise<string> {
   });
 }
 
+/**
+ * Resolve a user-supplied output path and ensure it stays within the current
+ * working directory. This prevents a malicious or mistaken CLI argument (e.g.
+ * `../../etc/passwd` or an absolute path) from escaping the project tree when
+ * the report is written.
+ */
+function resolveSafeOutputPath(candidate: string): string {
+  const baseDir = process.cwd();
+  const resolved = path.resolve(baseDir, candidate);
+  const relative = path.relative(baseDir, resolved);
+  if (relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(
+      `Refusing to write outside of the working directory: "${candidate}" resolves to "${resolved}".`,
+    );
+  }
+  return resolved;
+}
+
 async function main(): Promise<void> {
   const outputPath = process.argv[2] ?? "audit-report.html";
+  const safeOutputPath = resolveSafeOutputPath(outputPath);
   const raw = await readStdin();
   const groups = parseAudit(raw);
 
   const html = renderHtml(groups);
-  fs.writeFileSync(outputPath, html, "utf8");
+  fs.writeFileSync(safeOutputPath, html, "utf8");
 
   const counts = countBySeverity(groups);
   const total = Object.values(counts).reduce((sum, value) => sum + value, 0);
   console.info(
-    `Audit report written to ${outputPath} (${total} advisories across ${groups.length} packages: ` +
+    `Audit report written to ${safeOutputPath} (${total} advisories across ${groups.length} packages: ` +
       `${counts.critical} critical, ${counts.high} high, ${counts.moderate} moderate, ${counts.low} low, ${counts.info} info).`,
   );
 }
