@@ -34,5 +34,4 @@ eslint-report.json
 blob-report/*
 
 audit-report.html
-audit-report.md
 audit-results.ndjson
