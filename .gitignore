@@ -32,3 +32,6 @@ test-results/*
 .scannerwork
 eslint-report.json
 blob-report/*
+
+audit-report.html
+audit-results.ndjson
