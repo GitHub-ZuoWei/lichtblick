@@ -15,7 +15,11 @@
  *   yarn npm audit --all --recursive --severity moderate --json | ts-node ci/audit-report.ts
  *
  * Reads the audit NDJSON from stdin and writes the HTML report to the path
- * given by the first CLI argument (defaults to `audit-report.html`).
+ * given by the first CLI argument (defaults to `audit-report.html`). An
+ * optional second argument writes a Markdown copy of the report. When the
+ * `GITHUB_STEP_SUMMARY` environment variable is set (i.e. running in GitHub
+ * Actions), the Markdown report is also appended to the job summary so it is
+ * viewable directly on the workflow run page without downloading the artifact.
  */
 
 import fs from "node:fs";
@@ -28,6 +32,14 @@ const SEVERITY_ORDER: Record<Severity, number> = {
   moderate: 2,
   low: 3,
   info: 4,
+};
+
+const SEVERITY_EMOJI: Record<Severity, string> = {
+  critical: "🔴",
+  high: "🟠",
+  moderate: "🟡",
+  low: "🔵",
+  info: "⚪",
 };
 
 /**
@@ -383,6 +395,83 @@ function renderHtml(groups: PackageGroup[]): string {
 `;
 }
 
+/** Escape characters that would break GitHub-flavored Markdown table cells or inline text. */
+function escapeMarkdown(value: string): string {
+  return value.replace(/\|/g, "\\|").replace(/\r?\n/g, " ").trim();
+}
+
+function renderMarkdownAdvisory(advisory: NormalizedAdvisory): string {
+  const lines: string[] = [];
+  const titleId = /^\d+$/.test(advisory.id) ? `Advisory #${advisory.id}` : advisory.id;
+  lines.push(
+    `- ${SEVERITY_EMOJI[advisory.severity]} **${advisory.severity}** · ${escapeMarkdown(titleId)}`,
+  );
+  lines.push(`  - ${escapeMarkdown(advisory.issue)}`);
+  lines.push(`  - Vulnerable: \`${escapeMarkdown(advisory.vulnerableVersions)}\``);
+  if (advisory.treeVersions.length > 0) {
+    lines.push(
+      `  - Installed: ${advisory.treeVersions.map((version) => `\`${escapeMarkdown(version)}\``).join(", ")}`,
+    );
+  }
+  if (advisory.dependents.length > 0) {
+    lines.push(
+      `  - Dependents: ${advisory.dependents.map((dep) => `\`${escapeMarkdown(dep)}\``).join(", ")}`,
+    );
+  }
+  if (advisory.url != undefined) {
+    lines.push(`  - ${escapeMarkdown(advisory.url)}`);
+  }
+  return lines.join("\n");
+}
+
+function renderMarkdownGroup(group: PackageGroup): string {
+  const advisories = [...group.advisories].sort(
+    (a, b) => SEVERITY_ORDER[a.severity] - SEVERITY_ORDER[b.severity],
+  );
+  const countLabel =
+    group.advisories.length === 1 ? "1 advisory" : `${group.advisories.length} advisories`;
+
+  return [
+    `<details><summary>${SEVERITY_EMOJI[group.highestSeverity]} <strong>${escapeMarkdown(group.packageName)}</strong> — ${countLabel}</summary>`,
+    "",
+    advisories.map(renderMarkdownAdvisory).join("\n"),
+    "",
+    "</details>",
+  ].join("\n");
+}
+
+/** Render a GitHub-flavored Markdown report suitable for a workflow job summary. */
+function renderMarkdown(groups: PackageGroup[]): string {
+  const counts = countBySeverity(groups);
+  const totalAdvisories = Object.values(counts).reduce((sum, value) => sum + value, 0);
+
+  const lines: string[] = [];
+  lines.push("## 🔍 Dependency Audit Report");
+  lines.push("");
+  lines.push(
+    `**${totalAdvisories}** advisor${totalAdvisories === 1 ? "y" : "ies"} across **${groups.length}** package${groups.length === 1 ? "" : "s"}.`,
+  );
+  lines.push("");
+
+  if (groups.length === 0) {
+    lines.push("✅ No vulnerabilities found.");
+    lines.push("");
+    return lines.join("\n");
+  }
+
+  lines.push("| Severity | Count |");
+  lines.push("| --- | ---: |");
+  for (const severity of Object.keys(SEVERITY_ORDER) as Severity[]) {
+    lines.push(
+      `| ${SEVERITY_EMOJI[severity]} ${severity[0]!.toUpperCase()}${severity.slice(1)} | ${counts[severity]} |`,
+    );
+  }
+  lines.push("");
+  lines.push(...groups.map(renderMarkdownGroup));
+  lines.push("");
+  return lines.join("\n");
+}
+
 async function readStdin(): Promise<string> {
   return await new Promise((resolve, reject) => {
     let data = "";
@@ -397,10 +486,23 @@ async function readStdin(): Promise<string> {
 
 async function main(): Promise<void> {
   const outputPath = process.argv[2] ?? "audit-report.html";
+  const markdownPath = process.argv[3];
   const raw = await readStdin();
   const groups = parseAudit(raw);
+
   const html = renderHtml(groups);
   fs.writeFileSync(outputPath, html, "utf8");
+
+  // Markdown is rendered for the GitHub Actions job summary, which shows up
+  // directly on the workflow run page (no artifact download required).
+  const markdown = renderMarkdown(groups);
+  if (markdownPath != undefined) {
+    fs.writeFileSync(markdownPath, markdown, "utf8");
+  }
+  const summaryPath = process.env.GITHUB_STEP_SUMMARY;
+  if (summaryPath != undefined && summaryPath.length > 0) {
+    fs.appendFileSync(summaryPath, `${markdown}\n`, "utf8");
+  }
 
   const counts = countBySeverity(groups);
   const total = Object.values(counts).reduce((sum, value) => sum + value, 0);

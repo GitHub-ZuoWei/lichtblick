@@ -101,9 +101,9 @@ jobs:
           echo "exit_code=$?" >> "$GITHUB_OUTPUT"
           set -e
 
-      - name: Generate audit HTML report
+      - name: Generate audit report
         if: always()
-        run: yarn ts-node ci/audit-report.ts audit-report.html < audit-results.ndjson
+        run: yarn ts-node ci/audit-report.ts audit-report.html audit-report.md < audit-results.ndjson
 
       - name: Upload audit report
         if: always()
@@ -112,6 +112,7 @@ jobs:
           name: dependency-audit-report
           path: |
             audit-report.html
+            audit-report.md
             audit-results.ndjson
           retention-days: 7
           if-no-files-found: warn
@@ -119,7 +120,10 @@ jobs:
       - name: Fail if vulnerabilities were found
         if: always() && steps.audit.outputs.exit_code != '0'
         run: |
-          echo "::error::Dependency audit found vulnerabilities. See the 'dependency-audit-report' artifact for details."
+          if [ -f audit-report.md ]; then
+            cat audit-report.md
+          fi
+          echo "::error::Dependency audit found vulnerabilities. See the report above, the job summary, or the 'dependency-audit-report' artifact for details."
           exit 1
 
   e2e-desktop:
