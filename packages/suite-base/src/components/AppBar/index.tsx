@@ -44,6 +44,7 @@ import { CustomWindowControls, CustomWindowControlsProps } from "./CustomWindowC
 import { DataSource } from "./DataSource";
 import { NetworkStatusIndicator } from "./NetworkStatusIndicator";
 import { SettingsMenu } from "./SettingsMenu";
+import { WorkspaceSwitcher } from "./WorkspaceSwitcher";
 
 const useStyles = makeStyles<{ debugDragRegion?: boolean }, "avatar">()((
   theme,
@@ -259,6 +260,7 @@ export function AppBar(props: AppBarProps): React.JSX.Element {
 
           <div className={classes.end}>
             <div className={classes.endInner}>
+              <WorkspaceSwitcher />
               <NetworkStatusIndicator />
               {enableMemoryUseIndicator && <MemoryUseIndicator />}
               {appBarLayoutButton}
