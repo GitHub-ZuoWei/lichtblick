@@ -11,6 +11,7 @@ import { assert } from "ts-essentials";
 
 import {
   EncodedVideoFrame,
+  VideoCodec,
   VideoPlayer,
   canonicalVideoCodec,
   videoCodecNeedsKeyframeReplay,
@@ -156,7 +157,9 @@ export class ImageRenderable extends Renderable<ImageUserData> {
   #receivedImageSequenceNumber = 0;
   #displayedImageSequenceNumber = 0;
   #showingErrorImage = false;
-  #cachedVideoDecoderConfig: VideoDecoderConfig | undefined;
+  // Decoder config parsed from the most recent keyframe. Delta frames carry no parameter sets, so
+  // they reuse this instead of reparsing the SPS.
+  #cachedVideoDecoderConfig?: VideoDecoderConfig;
   #videoFirstMessageTime: bigint | undefined;
   #lastVideoMessageTime: bigint | undefined;
   #lastQueuedVideoMessageTime: bigint | undefined;
@@ -171,6 +174,12 @@ export class ImageRenderable extends Renderable<ImageUserData> {
   #videoFrameHistoryBytes = 0;
 
   #disposed = false;
+
+  #videoFormat: string | undefined;
+  // Cache canonical codec normalization by incoming format string to avoid repeated prefix checks
+  // while still handling format changes on a reused renderable instance.
+  readonly #codecByFormat = new Map<string, VideoCodec | undefined>();
+  #codec: VideoCodec | undefined;
 
   public constructor(topicName: string, renderer: IRenderer, userData: ImageUserData) {
     super(topicName, renderer, userData);
@@ -280,7 +289,14 @@ export class ImageRenderable extends Renderable<ImageUserData> {
     this.userData.image = image;
 
     const seq = ++this.#receivedImageSequenceNumber;
-    const codec = "format" in image ? canonicalVideoCodec(image.format) : undefined;
+    const incomingFormat = "format" in image ? image.format : undefined;
+    const incomingCodec =
+      incomingFormat == undefined ? undefined : this.#cachedCanonicalCodec(incomingFormat);
+    const incomingVideoFormat = incomingCodec == undefined ? undefined : incomingFormat;
+    if (incomingCodec !== this.#codec || incomingVideoFormat !== this.#videoFormat) {
+      this.#resetCodecStateForFormatChange(incomingCodec, incomingVideoFormat);
+    }
+    const codec = this.#codec;
 
     if (codec != undefined) {
       const videoImage = image as CompressedVideo;
@@ -327,6 +343,33 @@ export class ImageRenderable extends Renderable<ImageUserData> {
     // Raw (non-video) images decode in parallel; the `#displayedImageSequenceNumber > seq` guard
     // inside `#startDecode` drops late results.
     void this.#startDecode(image, seq, resizeWidth, onDecoded);
+  }
+
+  #cachedCanonicalCodec(format: string): VideoCodec | undefined {
+    if (this.#codecByFormat.has(format)) {
+      return this.#codecByFormat.get(format);
+    }
+
+    const codec = canonicalVideoCodec(format);
+    this.#codecByFormat.set(format, codec);
+    return codec;
+  }
+
+  #resetCodecStateForFormatChange(
+    nextCodec: VideoCodec | undefined,
+    nextVideoFormat: string | undefined,
+  ): void {
+    this.#codec = nextCodec;
+    this.#videoFormat = nextVideoFormat;
+    this.#cachedVideoDecoderConfig = undefined;
+    this.#videoFirstMessageTime = undefined;
+    this.#lastVideoMessageTime = undefined;
+    this.#lastQueuedVideoMessageTime = undefined;
+    this.#waitingForVideoKeyframe = nextCodec != undefined;
+    this.#canReplayVideoGop = false;
+    this.#pendingVideoDecodeQueue.length = 0;
+    this.#videoFrameHistory.length = 0;
+    this.videoPlayer?.resetForSeek();
   }
 
   /**
@@ -485,11 +528,13 @@ export class ImageRenderable extends Renderable<ImageUserData> {
     this.#lastVideoMessageTime = messageTime;
     this.#videoFirstMessageTime ??= messageTime;
 
-    const preparedFrame = prepareVideoFrame(frameMsg);
+    const preparedFrame = prepareVideoFrame(frameMsg, undefined, this.#codec);
 
+    // Keyframes are the only frames that produce a decoder config; remember it for delta frames.
     if (preparedFrame.decoderConfig != undefined) {
       this.#cachedVideoDecoderConfig = preparedFrame.decoderConfig;
     }
+
     const timestampMicros = Number((messageTime - this.#videoFirstMessageTime) / 1000n);
     this.#rememberVideoFrame(frameMsg, preparedFrame, timestampMicros);
 
@@ -501,7 +546,7 @@ export class ImageRenderable extends Renderable<ImageUserData> {
     preparedFrame: PreparedVideoFrame,
     timestampMicros: number,
   ): void {
-    if (!videoCodecNeedsKeyframeReplay(canonicalVideoCodec(frame.format))) {
+    if (!videoCodecNeedsKeyframeReplay(this.#codec)) {
       return;
     }
     const existingIndex = this.#videoFrameHistory.findIndex(
@@ -587,7 +632,7 @@ export class ImageRenderable extends Renderable<ImageUserData> {
     await this.videoPlayer.init(decoderConfig);
     const result = await this.videoPlayer.decodeFrames(
       gop.map((entry): EncodedVideoFrame => {
-        const preparedFrame = prepareVideoFrame(entry.frame);
+        const preparedFrame = prepareVideoFrame(entry.frame, undefined, this.#codec);
         return {
           data: preparedFrame.data,
           timestampMicros: entry.timestampMicros,
@@ -603,12 +648,16 @@ export class ImageRenderable extends Renderable<ImageUserData> {
       return undefined;
     }
 
-    const imageBitmap = await globalThis.createImageBitmap(result.frame, { resizeWidth });
-    this.videoPlayer.lastImageBitmap = imageBitmap;
-    result.frame.close();
-    this.#waitingForVideoKeyframe = false;
-    this.#canReplayVideoGop = false;
-    return imageBitmap;
+    try {
+      const imageBitmap = await globalThis.createImageBitmap(result.frame, { resizeWidth });
+      this.videoPlayer.lastImageBitmap?.close();
+      this.videoPlayer.lastImageBitmap = imageBitmap;
+      this.#waitingForVideoKeyframe = false;
+      this.#canReplayVideoGop = false;
+      return imageBitmap;
+    } finally {
+      result.frame.close();
+    }
   }
 
   protected async decodeImage(
@@ -616,7 +665,7 @@ export class ImageRenderable extends Renderable<ImageUserData> {
     resizeWidth?: number,
   ): Promise<ImageBitmap | ImageData> {
     if ("format" in image) {
-      if (canonicalVideoCodec(image.format) == undefined) {
+      if (this.#codec == undefined) {
         return await decodeCompressedImageToBitmap(image, resizeWidth);
       } else {
         const frameMsg = image as CompressedVideo;

@@ -39,12 +39,12 @@ describe("H265", () => {
     );
   });
 
-  it("should return a generic decoder config for supported h265 frames", () => {
-    // Given a P-slice frame
+  it("should fall back to the default HEVC codec when the frame has no SPS", () => {
+    // Given a P-slice frame with no SPS NAL unit
     const frame = H265FrameBuilder.frameData([H265FrameBuilder.slice(1, H265SliceType.P)]);
 
     // When ParseDecoderConfig is called
-    // Then it returns the default HEVC codec string
+    // Then it falls back to the generic HEVC codec string (no dimensions)
     expect(H265.ParseDecoderConfig(frame)).toEqual({ codec: DEFAULT_HEVC_CODEC });
   });
 

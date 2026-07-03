@@ -5,6 +5,7 @@
 // License, v2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at http://mozilla.org/MPL/2.0/
 
+import { SPS } from "./SPS";
 import { DEFAULT_HEVC_CODEC, H265_RANDOM_ACCESS_TYPES } from "./constants";
 import {
   H265FrameInfo,
@@ -74,7 +75,27 @@ export class H265 {
   }
 
   public static ParseDecoderConfig(data: Uint8Array): VideoDecoderConfig | undefined {
-    return H265.ToAnnexB(data) == undefined ? undefined : { codec: DEFAULT_HEVC_CODEC };
+    const annexBData = H265.ToAnnexB(data);
+    if (annexBData == undefined) {
+      return undefined;
+    }
+
+    // Search for an SPS NAL unit to derive the codec string and coded dimensions. If it is absent
+    // or cannot be parsed, fall back to the generic HEVC codec string (no dimensions).
+    const spsData = H265.GetFirstNaluOfType(annexBData, H265NaluType.SPS_NUT);
+    return buildDecoderConfig(spsData);
+  }
+
+  private static GetFirstNaluOfType(
+    annexBData: Uint8Array,
+    naluType: number,
+  ): Uint8Array | undefined {
+    for (const nalu of H265.Nalus(annexBData)) {
+      if (nalu.type === naluType) {
+        return nalu.data;
+      }
+    }
+    return undefined;
   }
 
   public static InspectFrame(data: Uint8Array, context?: H265ParserContext): H265FrameInfo {
@@ -109,6 +130,7 @@ export class H265 {
     }
 
     const annexBBoxSize = H265.AnnexBBoxSize(data);
+    const isKeyframe = state.hasRandomAccessNaluType;
 
     // Only materialize a stripped buffer when parameter sets are actually present (rare for delta
     // frames). When nothing is stripped, leave `strippedData` undefined so callers reuse
@@ -120,7 +142,7 @@ export class H265 {
 
     return {
       bitstreamFormat: annexBBoxSize == undefined ? "length-prefixed" : "annex-b",
-      isKeyframe: state.hasRandomAccessNaluType,
+      isKeyframe,
       frameType: H265.FrameType(state.sliceTypes),
       sliceTypes: state.sliceTypes,
       hasUnparsedVclSlice: state.hasUnparsedVclSlice,
@@ -373,5 +395,22 @@ export class H265 {
     }
 
     return result;
+  }
+}
+
+function buildDecoderConfig(spsData: Uint8Array | undefined): VideoDecoderConfig {
+  if (spsData == undefined) {
+    return { codec: DEFAULT_HEVC_CODEC };
+  }
+
+  try {
+    const sps = new SPS(spsData);
+    return {
+      codec: sps.MIME(),
+      codedWidth: sps.picWidth,
+      codedHeight: sps.picHeight,
+    };
+  } catch {
+    return { codec: DEFAULT_HEVC_CODEC };
   }
 }
