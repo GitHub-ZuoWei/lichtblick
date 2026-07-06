@@ -3659,6 +3659,7 @@ __metadata:
   version: 0.0.0-use.local
   resolution: "@lichtblick/suite@workspace:packages/suite"
   dependencies:
+    "@lichtblick/message-definition": "npm:1.0.0"
     "@lichtblick/tsconfig": "npm:1.1.2"
     typescript: "npm:6.0.3"
   languageName: unknown
