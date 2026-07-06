@@ -36,12 +36,7 @@ export type ParameterValue =
 
 // Valid types for global variables
 export type VariableValue =
-  | undefined
-  | boolean
-  | number
-  | string
-  | VariableValue[]
-  | { [key: string]: VariableValue };
+  undefined | boolean | number | string | VariableValue[] | { [key: string]: VariableValue };
 
 export type VariableStruct = { [key: string]: VariableValue };
 
@@ -1035,9 +1030,7 @@ export type SettingsTreeActionReorder = {
  * edits and updates.
  */
 export type SettingsTreeAction =
-  | SettingsTreeActionUpdate
-  | SettingsTreeActionPerformNode
-  | SettingsTreeActionReorder;
+  SettingsTreeActionUpdate | SettingsTreeActionPerformNode | SettingsTreeActionReorder;
 
 export type SettingsTreeNodes = Record<string, undefined | SettingsTreeNode>;
 
