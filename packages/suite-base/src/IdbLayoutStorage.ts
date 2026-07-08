@@ -81,13 +81,27 @@ export class IdbLayoutStorage implements ILayoutStorage {
     fromNamespace: string;
     toNamespace: string;
   }): Promise<void> {
-    const tx = (await this.#db).transaction("layouts", "readwrite");
-    const store = tx.objectStore("layouts");
+    const db = await this.#db;
 
     try {
-      for await (const cursor of store.index("namespace").iterate(fromNamespace)) {
-        await store.put({ namespace: toNamespace, layout: cursor.value.layout });
-        await cursor.delete();
+      const tx = db.transaction(OBJECT_STORE_NAME, "readwrite");
+      const store = tx.objectStore(OBJECT_STORE_NAME);
+      const namespaceIndex = store.index("namespace");
+
+      // Read inside the same readwrite transaction so a concurrent writer cannot insert a
+      // conflicting layout between the read and write phases. Use getAll (not a cursor) to keep
+      // snapshot reads without triggering the cursor auto-commit issue.
+      const targetRecords = await namespaceIndex.getAll(toNamespace);
+      const existingNames = new Set(targetRecords.map(({ layout }) => layout.name));
+      const sourceRecords = await namespaceIndex.getAll(fromNamespace);
+
+      for (const { layout } of sourceRecords) {
+        // Skip layouts whose name already exists in the target namespace to avoid duplicates.
+        if (!existingNames.has(layout.name)) {
+          await store.put({ namespace: toNamespace, layout });
+          existingNames.add(layout.name);
+        }
+        await store.delete([fromNamespace, layout.id]);
       }
       await tx.done;
     } catch (error) {
