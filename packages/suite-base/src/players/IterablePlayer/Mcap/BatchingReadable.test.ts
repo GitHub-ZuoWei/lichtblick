@@ -300,5 +300,4 @@ describe("BatchingReadable", () => {
     expect(dataA).toEqual(expectedBytes(0n, 100n));
     expect(dataB).toEqual(expectedBytes(200n, 100n));
   });
-
 });
