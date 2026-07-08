@@ -24,10 +24,10 @@ type PendingRead = {
  * is smaller than `gapThresholdBytes`, up to a merged span of `maxCoalescedBytes`.
  */
 export class BatchingReadable implements McapTypes.IReadable {
-  #inner: McapTypes.IReadable;
-  #gapThresholdBytes: bigint;
-  #maxCoalescedBytes: bigint;
-  #pending: PendingRead[] = [];
+  readonly #inner: McapTypes.IReadable;
+  readonly #gapThresholdBytes: bigint;
+  readonly #maxCoalescedBytes: bigint;
+  readonly #pending: PendingRead[] = [];
   #scheduled = false;
 
   public constructor(
@@ -62,12 +62,20 @@ export class BatchingReadable implements McapTypes.IReadable {
       return;
     }
 
-    batch.sort((a, b) => (a.offset < b.offset ? -1 : a.offset > b.offset ? 1 : 0));
+    batch.sort((a, b) => {
+      if (a.offset < b.offset) {
+        return -1;
+      }
+      if (a.offset > b.offset) {
+        return 1;
+      }
+      return 0;
+    });
 
     type Group = { start: bigint; end: bigint; members: PendingRead[] };
     const groups: Group[] = [];
     for (const read of batch) {
-      const current = groups[groups.length - 1];
+      const current = groups.at(-1);
       const readEnd = read.offset + read.size;
       const mergedEnd = current != undefined && current.end > readEnd ? current.end : readEnd;
       if (

@@ -20,8 +20,8 @@ type RemoteFileReadableOptions = {
 };
 
 export class RemoteFileReadable {
-  #remoteReader: CachedFilelike;
-  #batchingReadable: BatchingReadable;
+  readonly #remoteReader: CachedFilelike;
+  readonly #batchingReadable: BatchingReadable;
 
   public constructor(url: string, options?: RemoteFileReadableOptions) {
     const fileReader = new BrowserHttpReader(url);
