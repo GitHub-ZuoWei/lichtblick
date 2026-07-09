@@ -43,10 +43,10 @@ import { useUserProfileStorage } from "@lichtblick/suite-base/context/UserProfil
 import {
   BUSY_POLLING_INTERVAL_MS,
   BUSY_POLLING_TIMEOUT_MS,
+  DEFAULT_LAYOUT,
   MAX_SUPPORTED_LAYOUT_VERSION,
   ORG_PERMISSION_PREFIX,
 } from "@lichtblick/suite-base/providers/CurrentLayoutProvider/constants";
-import { defaultLayout } from "@lichtblick/suite-base/providers/CurrentLayoutProvider/defaultLayout";
 import useUpdateSharedPanelState from "@lichtblick/suite-base/providers/CurrentLayoutProvider/hooks/useUpdateSharedPanelState";
 import { loadDefaultLayouts } from "@lichtblick/suite-base/providers/CurrentLayoutProvider/loadDefaultLayouts";
 import panelsReducer from "@lichtblick/suite-base/providers/CurrentLayoutProvider/reducers";
@@ -315,10 +315,16 @@ export default function CurrentLayoutProvider({
 
     const layouts = await layoutManager.getLayouts();
 
-    // Check if there's a layout specified by app parameter
-    const defaultLayoutFromParameters = layouts.find((l) => l.name === appParameters.defaultLayout);
+    // Check if there's a layout specified by app parameter. When multiple layouts share the
+    // name, prefer the organizational (shared) layout over a local one.
+    const matchingLayouts = layouts.filter((l) => l.name === appParameters.defaultLayout);
+    const defaultLayoutFromParameters =
+      matchingLayouts.find((l) => l.permission.startsWith(ORG_PERMISSION_PREFIX)) ??
+      matchingLayouts[0];
     if (defaultLayoutFromParameters) {
-      await setSelectedLayoutId(defaultLayoutFromParameters.id, { saveToProfile: true });
+      // Apply the URL-selected layout for the current session only, without persisting it to the
+      // user's profile, so a one-off ?layout= override does not become sticky on later visits.
+      await setSelectedLayoutId(defaultLayoutFromParameters.id, { saveToProfile: false });
       return;
     }
 
@@ -348,12 +354,8 @@ export default function CurrentLayoutProvider({
       return;
     }
 
-    const newLayout = await layoutManager.saveNewLayout({
-      name: "Default",
-      data: defaultLayout,
-      permission: "CREATOR_WRITE",
-    });
-    await setSelectedLayoutId(newLayout.id);
+    const defaultLayout = await layoutManager.saveNewLayout(DEFAULT_LAYOUT);
+    await setSelectedLayoutId(defaultLayout.id);
 
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getUserProfile, layoutManager, setSelectedLayoutId, enqueueSnackbar]);
