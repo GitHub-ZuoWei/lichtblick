@@ -224,7 +224,7 @@ export default function LayoutBrowser({
     await onSelectLayout(newLayout);
     setPersonalSectionExpanded(true);
 
-    void analytics.logEvent(AppEvent.LAYOUT_CREATE);
+    void Promise.resolve(analytics.logEvent(AppEvent.LAYOUT_CREATE));
   }, [
     currentDateForStorybook,
     layoutManager,
