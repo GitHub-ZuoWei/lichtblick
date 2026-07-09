@@ -9,7 +9,8 @@ import dotenv from "dotenv";
 import { EsbuildPlugin } from "esbuild-loader";
 import ForkTsCheckerWebpackPlugin from "fork-ts-checker-webpack-plugin";
 import MonacoWebpackPlugin from "monaco-editor-webpack-plugin";
-import path from "path";
+import { createRequire as _nodeCreateRequire } from "node:module";
+import { fileURLToPath as _nodeFileURLToPath, pathToFileURL as _nodePathToFileURL } from "node:url";
 import ReactRefreshTypescript from "react-refresh-typescript";
 import ts from "typescript";
 import webpack, { Configuration } from "webpack";
@@ -18,8 +19,17 @@ import { createTssReactNameTransformer } from "@lichtblick/typescript-transforme
 
 import { WebpackArgv } from "./WebpackArgv";
 
+// Compatible with both CJS (ts-node/webpack-cli) and ESM (Storybook 10+).
+// In CJS, __dirname and require are injected by Node's module wrapper; in ESM they are undefined.
+// eslint-disable-next-line no-var, no-underscore-dangle
+declare var __dirname: string | undefined;
+const currentDirUrl =
+  (typeof __dirname !== "undefined" ? _nodePathToFileURL(__dirname + "/") : undefined) ??
+  new URL(".", import.meta.url);
+const localRequire = _nodeCreateRequire(import.meta.url);
+
 // Load environment variables from .env.local
-dotenv.config({ path: path.resolve(__dirname, "../../.env") });
+dotenv.config({ path: _nodeFileURLToPath(new URL("../../.env", currentDirUrl.href)) });
 
 type Options = {
   // During hot reloading and development it is useful to comment out code while iterating.
@@ -57,15 +67,15 @@ export function makeConfig(
     resolve: {
       extensions: [".js", ".ts", ".jsx", ".tsx"],
       alias: {
-        "@lichtblick/suite-base": path.resolve(__dirname, "src"),
+        "@lichtblick/suite-base": _nodeFileURLToPath(new URL("src", currentDirUrl.href)),
       },
       fallback: {
-        path: require.resolve("path-browserify"),
-        stream: require.resolve("readable-stream"),
+        path: localRequire.resolve("path-browserify"), // foxglove-depcheck-used: path-browserify
+        stream: localRequire.resolve("readable-stream"), // foxglove-depcheck-used: readable-stream
         assert: false,
-        zlib: require.resolve("browserify-zlib"),
-        crypto: require.resolve("crypto-browserify"),
-        vm: require.resolve("vm-browserify"),
+        zlib: localRequire.resolve("browserify-zlib"), // foxglove-depcheck-used: browserify-zlib
+        crypto: localRequire.resolve("crypto-browserify"), // foxglove-depcheck-used: crypto-browserify
+        vm: localRequire.resolve("vm-browserify"), // foxglove-depcheck-used: vm-browserify
 
         // TypeScript tries to use this when running in node
         perf_hooks: false,
