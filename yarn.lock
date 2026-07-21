@@ -1455,7 +1455,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@babel/runtime@npm:^7.0.0, @babel/runtime@npm:^7.1.2, @babel/runtime@npm:^7.12.5, @babel/runtime@npm:^7.18.3, @babel/runtime@npm:^7.18.6, @babel/runtime@npm:^7.23.2, @babel/runtime@npm:^7.23.9, @babel/runtime@npm:^7.25.7, @babel/runtime@npm:^7.26.0, @babel/runtime@npm:^7.26.10, @babel/runtime@npm:^7.27.6, @babel/runtime@npm:^7.28.6, @babel/runtime@npm:^7.29.2, @babel/runtime@npm:^7.5.5, @babel/runtime@npm:^7.8.7, @babel/runtime@npm:^7.9.2":
+"@babel/runtime@npm:^7.1.2, @babel/runtime@npm:^7.12.5, @babel/runtime@npm:^7.18.3, @babel/runtime@npm:^7.18.6, @babel/runtime@npm:^7.23.2, @babel/runtime@npm:^7.23.9, @babel/runtime@npm:^7.25.7, @babel/runtime@npm:^7.26.0, @babel/runtime@npm:^7.26.10, @babel/runtime@npm:^7.27.6, @babel/runtime@npm:^7.28.6, @babel/runtime@npm:^7.29.2, @babel/runtime@npm:^7.5.5, @babel/runtime@npm:^7.8.7, @babel/runtime@npm:^7.9.2":
   version: 7.29.7
   resolution: "@babel/runtime@npm:7.29.7"
   checksum: 10/9883b4951787779fd382b121f22f92966d85f19434841f65fb00b2dfec232107e139683f47c6f252891826ad8ee18317b46c3a0e4819116a9885f47b46d7126a
@@ -3602,7 +3602,7 @@ __metadata:
     "@types/react-hover-observer": "workspace:*"
     "@types/react-transition-group": "npm:^4.4.8"
     "@types/react-virtualized-auto-sizer": "npm:1.0.4"
-    "@types/react-window": "npm:^1.8.5"
+    "@types/react-window": "npm:^2.0.0"
     "@types/sanitize-html": "npm:2.16.1"
     "@types/seedrandom": "npm:3.0.8"
     "@types/shallowequal": "npm:1.1.5"
@@ -3682,7 +3682,7 @@ __metadata:
     react-transition-group: "npm:4.4.5"
     react-use: "npm:17.6.0"
     react-virtualized-auto-sizer: "npm:1.0.26"
-    react-window: "npm:1.8.10"
+    react-window: "npm:2.2.7"
     readable-stream: "npm:4.4.2"
     recharts: "npm:2.15.3"
     rehype-raw: "npm:7.0.0"
@@ -6371,12 +6371,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@types/react-window@npm:^1.8.5":
-  version: 1.8.8
-  resolution: "@types/react-window@npm:1.8.8"
+"@types/react-window@npm:^2.0.0":
+  version: 2.0.0
+  resolution: "@types/react-window@npm:2.0.0"
   dependencies:
-    "@types/react": "npm:*"
-  checksum: 10/79b70b7c33161efb14bf69115792843de8e038594136a8373cfbbcc4066c49fd611dd2d3592a9a81d19d21c075bf14e5e73a64f4d9ad32e45d4d5493f5f53918
+    react-window: "npm:*"
+  checksum: 10/4c11d4e1e6b95ab482b79a6aaff87a8cd2978a08925c6b0fff7e856716608ccb50162e5cbf9ad02bff892681c7795cc9f3e376ede994ebfbcc55161fe8ab0517
   languageName: node
   linkType: hard
 
@@ -15606,13 +15606,6 @@ __metadata:
   languageName: node
   linkType: hard
 
-"memoize-one@npm:>=3.1.1 <6":
-  version: 5.2.1
-  resolution: "memoize-one@npm:5.2.1"
-  checksum: 10/b7141dc148b5c6fdd51e77ecf0421fd2581681eb8756e0b3dfbd4fe765b5e2b5a6bc90214bb6f19a96b6aed44de17eda3407142a7be9e24ccd0774bbd9874d1b
-  languageName: node
-  linkType: hard
-
 "memoize-weak@npm:1.0.2":
   version: 1.0.2
   resolution: "memoize-weak@npm:1.0.2"
@@ -18354,16 +18347,13 @@ __metadata:
   languageName: node
   linkType: hard
 
-"react-window@npm:1.8.10":
-  version: 1.8.10
-  resolution: "react-window@npm:1.8.10"
-  dependencies:
-    "@babel/runtime": "npm:^7.0.0"
-    memoize-one: "npm:>=3.1.1 <6"
+"react-window@npm:*, react-window@npm:2.2.7":
+  version: 2.2.7
+  resolution: "react-window@npm:2.2.7"
   peerDependencies:
-    react: ^15.0.0 || ^16.0.0 || ^17.0.0 || ^18.0.0
-    react-dom: ^15.0.0 || ^16.0.0 || ^17.0.0 || ^18.0.0
-  checksum: 10/6f4a713a2012d605370ef4c7026a45ddd6801e428faa4cad558b12b05ba54c00de72de9a360db109db9666f972a3d955b63af9e5a4cd5fbc52411a382273107b
+    react: ^18.0.0 || ^19.0.0
+    react-dom: ^18.0.0 || ^19.0.0
+  checksum: 10/94fc2aad2702d66a778c41e3caa6c47281b92cd4f3c04bfc8ee733581e08e9310697d00d86c50121f3328911492fcba272ab28e4d3cd399d95d0b15ce0d840e9
   languageName: node
   linkType: hard
 
