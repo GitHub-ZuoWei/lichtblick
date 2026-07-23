@@ -29,6 +29,10 @@ export interface IExtensionLoader {
   readonly namespace: Namespace;
   readonly type: TypeExtensionLoader;
 
+  // read-only loaders provide extensions bundled with the app; they are
+  // excluded from install/uninstall flows
+  readonly readOnly?: boolean;
+
   // get extension by id
   getExtension(id: string): Promise<ExtensionInfo | undefined>;
 

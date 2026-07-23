@@ -68,7 +68,9 @@ function createExtensionRegistryStore(
     };
 
     const installExtensions = async (namespace: Namespace, extensions: ExtensionData[]) => {
-      const namespaceLoaders = loaders.filter((loader) => loader.namespace === namespace);
+      const namespaceLoaders = loaders.filter(
+        (loader) => loader.namespace === namespace && loader.readOnly !== true,
+      );
       if (namespaceLoaders.length === 0) {
         throw new Error(`No extension loader found for namespace ${namespace}`);
       }
@@ -289,8 +291,18 @@ function createExtensionRegistryStore(
       const localLoaderType = isDesktopApp() ? "filesystem" : "browser";
       const loaderType: TypeExtensionLoader = namespace === "local" ? localLoaderType : "server";
 
+      const readOnlyLoaders = loaders.filter(
+        (loader) => loader.namespace === namespace && loader.readOnly === true,
+      );
+      for (const readOnlyLoader of readOnlyLoaders) {
+        if ((await readOnlyLoader.getExtension(id)) != undefined) {
+          throw new Error(`Extension ${id} is bundled with the app and cannot be uninstalled`);
+        }
+      }
+
       const namespaceLoader = loaders.find(
-        (loader) => loader.namespace === namespace && loader.type === loaderType,
+        (loader) =>
+          loader.namespace === namespace && loader.type === loaderType && loader.readOnly !== true,
       );
       if (!namespaceLoader) {
         throw new Error("No extension loader found for namespace " + namespace);
